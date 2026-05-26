@@ -26,7 +26,6 @@ try:
     sheets_attend = conn.read(worksheet="attendance", ttl=0)
     
     if sheets_members is not None and not sheets_members.empty:
-        # ID 데이터가 숫자로 들어올 경우를 대비해 확실하게 문자열로 변환
         sheets_members["id"] = sheets_members["id"].astype(str)
         st.session_state.members_db = sheets_members
     if sheets_attend is not None and not sheets_attend.empty:
@@ -73,13 +72,11 @@ with tab_attend:
     if members_df.empty:
         st.info("먼저 [예배자 관리] 탭에서 예배자를 추가해 주세요.")
     else:
-        # 현재 날짜의 출석 데이터 필터링
         if "date" in attend_df.columns and not attend_df.empty:
             current_attend = attend_df[attend_df["date"] == date_key]
         else:
             current_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
         
-        # 병합 및 기본값 채우기
         merged = pd.merge(members_df, current_attend, on="id", how="left")
         merged["status"] = merged["status"].fillna("미체크")
         merged["reason"] = merged["reason"].fillna("")
@@ -106,7 +103,6 @@ with tab_attend:
         display_df = merged[["id", "name", "position", "status", "meal", "reason"]].copy()
         display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
         
-        # 에러 유발 요인이었던 placeholder 제거 및 컬럼 가이드 단순화
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -138,8 +134,6 @@ with tab_attend:
                 cleaned_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
                 
             updated_attend = pd.concat([cleaned_attend, pd.DataFrame(new_attend_rows)], ignore_index=True)
-            
-            # 문자열 타입 일치화
             updated_attend["id"] = updated_attend["id"].astype(str)
             
             try:
@@ -148,13 +142,13 @@ with tab_attend:
                 st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
             except:
                 st.session_state.attend_db = updated_attend
-                st.success("💾 로컬 세션에 임시 저장되었습니다. (구글 시트 연동 확인 필요)")
+                st.success("💾 로컬 세션에 임시 저장되었습니다.")
                 
             time.sleep(1)
             st.rerun()
 
 # ==========================================
-#  TAB 2: 예배자 관리 (추가 / 삭제)
+#  TAB 2: 예배자 관리 (추가 / 수정 / 삭제 모두 포함)
 # ==========================================
 with tab_members:
     st.subheader("👥 등록된 예배자 명단")
@@ -162,52 +156,102 @@ with tab_members:
     if st.session_state.members_db.empty:
         st.write("등록된 예배자가 없습니다.")
     else:
+        # 현재 등록된 인원 테이블 출력
         view_m_df = st.session_state.members_db.copy()
         view_m_df.index = view_m_df.index + 1
         st.dataframe(view_m_df[["name", "position"]].rename(columns={"name":"이름", "position":"포지션"}), use_container_width=True)
     
     st.write("---")
-    st.markdown("##### ➕ 새 예배자 추가")
-    with st.form("add_member_form", clear_on_submit=True):
-        new_name = st.text_input("이름 *")
-        new_pos = st.selectbox("포지션 선택", POSITIONS)
-        
-        if st.form_submit_button("예배자 등록"):
-            if not new_name.strip():
-                st.error("이름을 입력해 주세요.")
-            elif not st.session_state.members_db.empty and new_name in st.session_state.members_db["name"].values:
-                st.warning(f"'{new_name}'은(는) 이미 등록된 이름입니다.")
-            else:
-                new_id = str(int(time.time() * 1000))
-                new_row = pd.DataFrame([{"id": new_id, "name": new_name, "position": new_pos}])
-                updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
-                updated_members["id"] = updated_members["id"].astype(str)
+    
+    # 3개의 하위 메뉴로 깔끔하게 분할 (추가 / 수정 / 삭제)
+    m_sub_tab1, m_sub_tab2, m_sub_tab3 = st.tabs(["➕ 예배자 추가", "✏️ 정보 수정", "🗑️ 예배자 삭제"])
+    
+    # 1. 예배자 추가
+    with m_sub_tab1:
+        with st.form("add_member_form", clear_on_submit=True):
+            new_name = st.text_input("새로운 예배자 이름 *")
+            new_pos = st.selectbox("포지션 선택", POSITIONS, key="add_pos")
+            
+            if st.form_submit_button("예배자 신규 등록"):
+                if not new_name.strip():
+                    st.error("이름을 입력해 주세요.")
+                elif not st.session_state.members_db.empty and new_name in st.session_state.members_db["name"].values:
+                    st.warning(f"'{new_name}'은(는) 이미 등록된 이름입니다.")
+                else:
+                    new_id = str(int(time.time() * 1000))
+                    new_row = pd.DataFrame([{"id": new_id, "name": new_name, "position": new_pos}])
+                    updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
+                    updated_members["id"] = updated_members["id"].astype(str)
+                    
+                    try:
+                        conn.update(worksheet="members", data=updated_members)
+                        st.session_state.members_db = updated_members
+                        st.success(f"👥 {new_name} 님이 성공적으로 등록되었습니다!")
+                    except:
+                        st.session_state.members_db = updated_members
+                        st.success(f"👥 {new_name} 님이 임시 등록되었습니다.")
+                    time.sleep(1)
+                    st.rerun()
+
+    # 2. 예배자 정보 수정 (이름 변경 또는 포지션 변경)
+    with m_sub_tab2:
+        if st.session_state.members_db.empty:
+            st.write("수정할 인원이 없습니다.")
+        else:
+            edit_target = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="edit_tgt")
+            
+            # 선택한 유저의 기존 정보 가져오기
+            target_row = st.session_state.members_db[st.session_state.members_db["name"] == edit_target].iloc[0]
+            
+            with st.form("edit_member_form"):
+                edit_name = st.text_input("이름 수정", value=target_row["name"])
                 
+                # 기존 포지션 인덱스 찾기
+                try:
+                    default_pos_idx = POSITIONS.index(target_row["position"])
+                except:
+                    default_pos_idx = 0
+                edit_pos = st.selectbox("포지션 수정", POSITIONS, index=default_pos_idx, key="edit_pos")
+                
+                if st.form_submit_button("정보 수정 완료"):
+                    if not edit_name.strip():
+                        st.error("이름은 비워둘 수 없습니다.")
+                    else:
+                        # 데이터프레임 복사 후 타겟 유저 정보 업데이트
+                        updated_members = st.session_state.members_db.copy()
+                        idx = updated_members[updated_members["id"] == target_row["id"]].index[0]
+                        updated_members.at[idx, "name"] = edit_name
+                        updated_members.at[idx, "position"] = edit_pos
+                        updated_members["id"] = updated_members["id"].astype(str)
+                        
+                        try:
+                            conn.update(worksheet="members", data=updated_members)
+                            st.session_state.members_db = updated_members
+                            st.success(f"✏️ {edit_target} 님의 정보가 수정되었습니다.")
+                        except:
+                            st.session_state.members_db = updated_members
+                            st.success(f"✏️ {edit_target} 님의 정보가 임시 수정되었습니다.")
+                        time.sleep(1)
+                        st.rerun()
+
+    # 3. 예배자 삭제
+    with m_sub_tab3:
+        if st.session_state.members_db.empty:
+            st.write("삭제할 인원이 없습니다.")
+        else:
+            delete_target = st.selectbox("삭제할 대상 선택", st.session_state.members_db["name"].values, key="del_tgt")
+            st.warning(f"⚠️ '{delete_target}' 님을 명단에서 삭제하시겠습니까? 관련 과거 출석 데이터는 유지되지만 명단에서는 제외됩니다.")
+            
+            if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
+                updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
+                updated_members["id"] = updated_members["id"].astype(str)
                 try:
                     conn.update(worksheet="members", data=updated_members)
                     st.session_state.members_db = updated_members
-                    st.success(f"👥 {new_name} 님이 구글 시트에 등록되었습니다!")
+                    st.success(f"🗑️ '{delete_target}' 님이 명단에서 완전히 삭제되었습니다.")
                 except:
                     st.session_state.members_db = updated_members
-                    st.success(f"👥 {new_name} 님이 임시 등록되었습니다.")
-                
+                    st.success(f"🗑️ '{delete_target}' 님이 임시 삭제되었습니다.")
+                    
                 time.sleep(1)
                 st.rerun()
-
-    if not st.session_state.members_db.empty:
-        st.write("---")
-        st.markdown("##### 🗑️ 예배자 삭제")
-        delete_target = st.selectbox("삭제할 예배자 선택", st.session_state.members_db["name"].values)
-        if st.button("선택한 예배자 삭제", type="secondary"):
-            updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
-            updated_members["id"] = updated_members["id"].astype(str)
-            try:
-                conn.update(worksheet="members", data=updated_members)
-                st.session_state.members_db = updated_members
-                st.success(f"'{delete_target}' 님이 구글 시트에서 삭제되었습니다.")
-            except:
-                st.session_state.members_db = updated_members
-                st.success(f"'{delete_target}' 님이 임시 삭제되었습니다.")
-                
-            time.sleep(1)
-            st.rerun()
