@@ -12,7 +12,6 @@ st.set_page_config(
 )
 
 # ── 2. 데이터베이스(구글 시트) 연결 및 세션 초기화 ───────────────────
-# 세션 상태(session_state)에 기본 변수들이 없으면 강제로 먼저 생성해 줍니다 (에러 방지)
 if "members_db" not in st.session_state:
     st.session_state.members_db = pd.DataFrame(columns=["id", "name", "position"])
 if "attend_db" not in st.session_state:
@@ -21,25 +20,22 @@ if "attend_db" not in st.session_state:
 # 구글 스프레드시트 실시간 데이터 로드 시도
 try:
     from streamlit_gsheets import GSheetsConnection
-    # Secrets에 등록된 설정으로 구글 시트 연결
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # 구글 시트에서 최신 데이터 읽어오기
-    # (주의: 구글 시트 하단 탭 이름이 각각 'members', 'attendance'여야 합니다)
-    sheets_members = conn.read(worksheet="members", ttl=0) # ttl=0 은 캐싱 없이 실시간으로 가져옴
+    sheets_members = conn.read(worksheet="members", ttl=0)
     sheets_attend = conn.read(worksheet="attendance", ttl=0)
     
-    # 데이터가 정상적으로 비어있지 않다면 세션에 갱신
     if sheets_members is not None and not sheets_members.empty:
+        # ID 데이터가 숫자로 들어올 경우를 대비해 확실하게 문자열로 변환
+        sheets_members["id"] = sheets_members["id"].astype(str)
         st.session_state.members_db = sheets_members
     if sheets_attend is not None and not sheets_attend.empty:
+        sheets_attend["id"] = sheets_attend["id"].astype(str)
         st.session_state.attend_db = sheets_attend
 
 except Exception as e:
-    # 만약 구글 시트 연결에 실패하면 안내 메시지를 띄우고 가상 데모 데이터로 작동하게 합니다.
-    st.warning("⚠️ 구글 스프레드시트 연결에 실패하여 데모 모드로 작동 중입니다. (Advanced settings 설정을 확인해 주세요)")
+    st.warning("⚠️ 구글 스프레드시트 연결에 실패하여 데모 모드로 작동 중입니다. (공유 권한 및 Secrets 설정을 확인해 주세요)")
     
-    # 임시 데모 데이터 세팅 (한 번도 세팅된 적이 없을 때만)
     if len(st.session_state.members_db) == 0:
         st.session_state.members_db = pd.DataFrame([
             {"id": "1", "name": "홍길동", "position": "PD"},
@@ -71,14 +67,17 @@ tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"
 #  TAB 1: 출석 체크 및 실시간 현황
 # ==========================================
 with tab_attend:
-    members_df = st.session_state.members_db
-    attend_df = st.session_state.attend_db
+    members_df = st.session_state.members_db.copy()
+    attend_df = st.session_state.attend_db.copy()
     
     if members_df.empty:
         st.info("먼저 [예배자 관리] 탭에서 예배자를 추가해 주세요.")
     else:
         # 현재 날짜의 출석 데이터 필터링
-        current_attend = attend_df[attend_df["date"] == date_key] if "date" in attend_df.columns else pd.DataFrame()
+        if "date" in attend_df.columns and not attend_df.empty:
+            current_attend = attend_df[attend_df["date"] == date_key]
+        else:
+            current_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
         
         # 병합 및 기본값 채우기
         merged = pd.merge(members_df, current_attend, on="id", how="left")
@@ -107,6 +106,7 @@ with tab_attend:
         display_df = merged[["id", "name", "position", "status", "meal", "reason"]].copy()
         display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
         
+        # 에러 유발 요인이었던 placeholder 제거 및 컬럼 가이드 단순화
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -115,7 +115,7 @@ with tab_attend:
                 "포지션": st.column_config.TextColumn(disabled=True),
                 "출석 상태": st.column_config.SelectboxColumn(options=["출석", "지각", "결석", "미체크"], required=True),
                 "🍚 식사 여부": st.column_config.CheckboxColumn(),
-                "지각/결석 사유": st.column_config.TextColumn(placeholder="사유를 입력하세요")
+                "지각/결석 사유": st.column_config.TextColumn() 
             },
             use_container_width=True,
             key=f"editor_{date_key}"
@@ -128,11 +128,10 @@ with tab_attend:
                     "date": date_key,
                     "id": str(row["ID"]),
                     "status": row["출석 상태"],
-                    "reason": row["지각/결석 사유"],
+                    "reason": str(row["지각/결석 사유"]),
                     "meal": bool(row["🍚 식사 여부"])
                 })
             
-            # 해당 날짜 데이터 교체
             if not attend_df.empty and "date" in attend_df.columns:
                 cleaned_attend = attend_df[attend_df["date"] != date_key]
             else:
@@ -140,7 +139,9 @@ with tab_attend:
                 
             updated_attend = pd.concat([cleaned_attend, pd.DataFrame(new_attend_rows)], ignore_index=True)
             
-            # 구글 시트 업데이트 및 세션 반영
+            # 문자열 타입 일치화
+            updated_attend["id"] = updated_attend["id"].astype(str)
+            
             try:
                 conn.update(worksheet="attendance", data=updated_attend)
                 st.session_state.attend_db = updated_attend
@@ -180,6 +181,7 @@ with tab_members:
                 new_id = str(int(time.time() * 1000))
                 new_row = pd.DataFrame([{"id": new_id, "name": new_name, "position": new_pos}])
                 updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
+                updated_members["id"] = updated_members["id"].astype(str)
                 
                 try:
                     conn.update(worksheet="members", data=updated_members)
@@ -198,6 +200,7 @@ with tab_members:
         delete_target = st.selectbox("삭제할 예배자 선택", st.session_state.members_db["name"].values)
         if st.button("선택한 예배자 삭제", type="secondary"):
             updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
+            updated_members["id"] = updated_members["id"].astype(str)
             try:
                 conn.update(worksheet="members", data=updated_members)
                 st.session_state.members_db = updated_members
