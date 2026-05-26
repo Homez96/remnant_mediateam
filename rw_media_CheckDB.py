@@ -17,15 +17,17 @@ if "members_db" not in st.session_state:
 if "attend_db" not in st.session_state:
     st.session_state.attend_db = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
 
-# 구글 스프레드시트 실시간 데이터 로드 시도
 try:
     from streamlit_gsheets import GSheetsConnection
-    # Secrets에 등록된 spreadsheet URL 주소를 명시적으로 타겟팅하여 연결합니다.
+    
+    # Secrets 설정 기반으로 연결 오브젝트 생성
     conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # URL 주소로부터 직접 members 탭과 attendance 탭을 읽어옵니다.
-    sheets_members = conn.read(worksheet="members", ttl=0)
-    sheets_attend = conn.read(worksheet="attendance", ttl=0)
+    clean_url = "https://docs.google.com/spreadsheets/d/1584S2jzLNFlSJHAgNOBo_w6HjwMwlJ7pUei4jVqeJrU"
+    
+    # 워크시트(탭) 읽어오기
+    sheets_members = conn.read(spreadsheet=clean_url, worksheet="members", ttl=0)
+    sheets_attend = conn.read(spreadsheet=clean_url, worksheet="attendance", ttl=0)
     
     if sheets_members is not None and not sheets_members.empty:
         sheets_members["id"] = sheets_members["id"].astype(str)
@@ -35,10 +37,7 @@ try:
         st.session_state.attend_db = sheets_attend
 
 except Exception as e:
-    # 어떤 에러 때문에 연결이 거부되는지 화면에 실시간으로 디버깅 메시지를 띄웁니다.
     st.error(f"❌ 구글 시트 연결 실패 원인: {str(e)}")
-    st.warning("⚠️ 데모 모드로 작동 중입니다. 구글 시트 우측 상단 [공유] 버튼을 눌러 서비스 계정 이메일이 '편집자'로 초대되었는지 다시 확인해 주세요.")
-    
     if len(st.session_state.members_db) == 0:
         st.session_state.members_db = pd.DataFrame([
             {"id": "1", "name": "홍길동", "position": "PD"},
@@ -67,7 +66,7 @@ date_key = str(selected_date)
 tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
 
 # ==========================================
-#  TAB 1: 출석 체크 및 실시간 현황
+#  TAB 1: 출석 체크
 # ==========================================
 with tab_attend:
     members_df = st.session_state.members_db.copy()
@@ -82,11 +81,15 @@ with tab_attend:
             current_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
         
         merged = pd.merge(members_df, current_attend, on="id", how="left")
-        merged["status"] = merged["status"].fillna("미체크")
-        merged["reason"] = merged["reason"].fillna("")
-        merged["meal"] = merged["meal"].fillna(False)
         
-        # 통계 현황판
+        # 🚨 [형식 호환성 에러 해결] 데이터 타입을 명시적으로 지정하여 에러 방지
+        merged["status"] = merged["status"].fillna("미체크").astype(str)
+        merged["reason"] = merged["reason"].fillna("").astype(str)
+        
+        # 식사 여부는 무조건 Boolean(True/False) 형식으로 강제 변환하여 체크박스 충돌 방지
+        merged["meal"] = merged["meal"].apply(lambda x: True if x is True or str(x).lower() == 'true' or x == 1 else False)
+        
+        # 현황판 통계
         total_count = len(members_df)
         p_count = int((merged["status"] == "출석").sum())
         l_count = int((merged["status"] == "지각").sum())
@@ -107,6 +110,7 @@ with tab_attend:
         display_df = merged[["id", "name", "position", "status", "meal", "reason"]].copy()
         display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
         
+        # 컬럼 속성 정의와 데이터 타입 일치화 완료
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -141,7 +145,7 @@ with tab_attend:
             updated_attend["id"] = updated_attend["id"].astype(str)
             
             try:
-                conn.update(worksheet="attendance", data=updated_attend)
+                conn.update(spreadsheet=clean_url, worksheet="attendance", data=updated_attend)
                 st.session_state.attend_db = updated_attend
                 st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
             except:
@@ -185,7 +189,7 @@ with tab_members:
                     updated_members["id"] = updated_members["id"].astype(str)
                     
                     try:
-                        conn.update(worksheet="members", data=updated_members)
+                        conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                         st.session_state.members_db = updated_members
                         st.success(f"👥 {new_name} 님이 성공적으로 등록되었습니다!")
                     except:
@@ -220,7 +224,7 @@ with tab_members:
                         updated_members["id"] = updated_members["id"].astype(str)
                         
                         try:
-                            conn.update(worksheet="members", data=updated_members)
+                            conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                             st.session_state.members_db = updated_members
                             st.success(f"✏️ {edit_target} 님의 정보가 수정되었습니다.")
                         except:
@@ -240,7 +244,7 @@ with tab_members:
                 updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
                 updated_members["id"] = updated_members["id"].astype(str)
                 try:
-                    conn.update(worksheet="members", data=updated_members)
+                    conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                     st.session_state.members_db = updated_members
                     st.success(f"🗑️ '{delete_target}' 님이 명단에서 완전히 삭제되었습니다.")
                 except:
