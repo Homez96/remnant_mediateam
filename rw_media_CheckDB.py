@@ -113,11 +113,11 @@ with tab_attend:
                 "🍚 식사 여부": st.column_config.CheckboxColumn(),
                 "지각/결석 사유": st.column_config.TextColumn() 
             },
-            use_container_width=True,
+            width="stretch",
             key=f"editor_{date_key}"
         )
         
-        if st.button("💾 출석 현황 실시간 저장", type="primary", use_container_width=True):
+        if st.button("💾 출석 현황 실시간 저장", type="primary", width="stretch"):
             new_attend_rows = []
             for _, row in edited_df.iterrows():
                 new_attend_rows.append({
@@ -148,7 +148,7 @@ with tab_attend:
             st.rerun()
 
 # ==========================================
-#  TAB 2: 예배자 관리 (추가 / 수정 / 삭제 모두 포함)
+#  TAB 2: 예배자 관리
 # ==========================================
 with tab_members:
     st.subheader("👥 등록된 예배자 명단")
@@ -156,17 +156,14 @@ with tab_members:
     if st.session_state.members_db.empty:
         st.write("등록된 예배자가 없습니다.")
     else:
-        # 현재 등록된 인원 테이블 출력
         view_m_df = st.session_state.members_db.copy()
         view_m_df.index = view_m_df.index + 1
-        st.dataframe(view_m_df[["name", "position"]].rename(columns={"name":"이름", "position":"포지션"}), use_container_width=True)
+        st.dataframe(view_m_df[["name", "position"]].rename(columns={"name":"이름", "position":"포지션"}), width="stretch")
     
     st.write("---")
     
-    # 3개의 하위 메뉴로 깔끔하게 분할 (추가 / 수정 / 삭제)
     m_sub_tab1, m_sub_tab2, m_sub_tab3 = st.tabs(["➕ 예배자 추가", "✏️ 정보 수정", "🗑️ 예배자 삭제"])
     
-    # 1. 예배자 추가
     with m_sub_tab1:
         with st.form("add_member_form", clear_on_submit=True):
             new_name = st.text_input("새로운 예배자 이름 *")
@@ -193,20 +190,15 @@ with tab_members:
                     time.sleep(1)
                     st.rerun()
 
-    # 2. 예배자 정보 수정 (이름 변경 또는 포지션 변경)
     with m_sub_tab2:
         if st.session_state.members_db.empty:
             st.write("수정할 인원이 없습니다.")
         else:
             edit_target = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="edit_tgt")
-            
-            # 선택한 유저의 기존 정보 가져오기
             target_row = st.session_state.members_db[st.session_state.members_db["name"] == edit_target].iloc[0]
             
             with st.form("edit_member_form"):
                 edit_name = st.text_input("이름 수정", value=target_row["name"])
-                
-                # 기존 포지션 인덱스 찾기
                 try:
                     default_pos_idx = POSITIONS.index(target_row["position"])
                 except:
@@ -217,7 +209,6 @@ with tab_members:
                     if not edit_name.strip():
                         st.error("이름은 비워둘 수 없습니다.")
                     else:
-                        # 데이터프레임 복사 후 타겟 유저 정보 업데이트
                         updated_members = st.session_state.members_db.copy()
                         idx = updated_members[updated_members["id"] == target_row["id"]].index[0]
                         updated_members.at[idx, "name"] = edit_name
@@ -234,13 +225,12 @@ with tab_members:
                         time.sleep(1)
                         st.rerun()
 
-    # 3. 예배자 삭제
     with m_sub_tab3:
         if st.session_state.members_db.empty:
             st.write("삭제할 인원이 없습니다.")
         else:
             delete_target = st.selectbox("삭제할 대상 선택", st.session_state.members_db["name"].values, key="del_tgt")
-            st.warning(f"⚠️ '{delete_target}' 님을 명단에서 삭제하시겠습니까? 관련 과거 출석 데이터는 유지되지만 명단에서는 제외됩니다.")
+            st.warning(f"⚠️ '{delete_target}' 님을 명단에서 삭제하시겠습니까?")
             
             if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
                 updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
