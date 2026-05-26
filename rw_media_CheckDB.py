@@ -20,8 +20,10 @@ if "attend_db" not in st.session_state:
 # 구글 스프레드시트 실시간 데이터 로드 시도
 try:
     from streamlit_gsheets import GSheetsConnection
+    # Secrets에 등록된 spreadsheet URL 주소를 명시적으로 타겟팅하여 연결합니다.
     conn = st.connection("gsheets", type=GSheetsConnection)
     
+    # URL 주소로부터 직접 members 탭과 attendance 탭을 읽어옵니다.
     sheets_members = conn.read(worksheet="members", ttl=0)
     sheets_attend = conn.read(worksheet="attendance", ttl=0)
     
@@ -33,7 +35,9 @@ try:
         st.session_state.attend_db = sheets_attend
 
 except Exception as e:
-    st.warning("⚠️ 구글 스프레드시트 연결에 실패하여 데모 모드로 작동 중입니다. (공유 권한 및 Secrets 설정을 확인해 주세요)")
+    # 어떤 에러 때문에 연결이 거부되는지 화면에 실시간으로 디버깅 메시지를 띄웁니다.
+    st.error(f"❌ 구글 시트 연결 실패 원인: {str(e)}")
+    st.warning("⚠️ 데모 모드로 작동 중입니다. 구글 시트 우측 상단 [공유] 버튼을 눌러 서비스 계정 이메일이 '편집자'로 초대되었는지 다시 확인해 주세요.")
     
     if len(st.session_state.members_db) == 0:
         st.session_state.members_db = pd.DataFrame([
