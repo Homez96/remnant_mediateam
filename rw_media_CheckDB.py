@@ -44,27 +44,24 @@ except Exception as e:
             {"id": "3", "name": "이영희", "position": "자막"},
         ])
 
-# ── 3. 공통 변수 및 디자인 (CSS 속성 주입 방식 변경) ─────────────────
+# ── 3. 공통 변수 및 디자인 ──────────────────────────────────────────
 POSITIONS = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "PD", "TD",
              "노출", "자막", "LED", "조명", "사진 촬영", "릴스", "FD", "음향"]
 
-# ✨ class_name 에러를 우회하기 위해 마크다운 전용 묵시적 스타일 시트 적용
 st.markdown("""
     <style>
     .main-title { font-size:28px; font-weight:bold; color:#5038B0; text-align:center; margin-bottom:5px; }
     .sub-title { font-size:14px; color:#666666; text-align:center; margin-bottom:20px; }
     .filter-box { background-color: #F1F3FA; padding: 12px; border-radius: 10px; margin-top: 10px; border-left: 5px solid #5038B0; font-size: 14px; }
     
-    /* 🎨 기본 상단 대시보드 버튼 스타일 공통 적용 */
+    /* 🎨 대시보드 버튼 스타일 정의 */
     div[data-testid="stHorizontalBlock"] div.stButton > button {
         width: 100% !important;
         background-color: #ffffff;
         border: 1px solid #E2E8F0;
         border-radius: 10px;
-        padding: 12px 5px !important;
+        padding: 8px 2px !important;
         text-align: center;
-        white-space: pre-line; /* \n 줄바꿈이 정상 작동하도록 설정 */
-        font-weight: normal;
         color: #333333;
         transition: all 0.2s ease;
     }
@@ -75,7 +72,7 @@ st.markdown("""
         color: #5038B0;
     }
 
-    /* 🎯 팁: 하이라이트된 버튼을 가리키는 특수 가상 데이터 어트리뷰트 제어 수식 (Streamlit용 예외 처리) */
+    /* 🎯 선택 활성화 상태 디자인 (배경 보라색 전환) */
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟢"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟡"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🔴"],
@@ -131,11 +128,215 @@ with tab_attend:
         m_count = int(merged["meal"].sum())
         u_count = total_count - (p_count + l_count + a_count)
         
-        # ── 🎯 메트릭 버튼 생성 (class_name 속성 제거 및 접두사 이모지로 선택 판별) ──
+        # ── 🎯 메트릭형 버튼 배치 (오타 완벽 수정 완료) ──────────────────
         col1, col2, col3, col4, col5 = st.columns(5)
         f_status = st.session_state.current_filter
         
         with col1:
             prefix1 = "🟢 " if f_status == "출석" else ""
-            if st.button(f"{prefix1}출석\n\n{p_count}명", key="btn_p", help="클릭하여 출석자만 보기"):
-                st.session_state.current
+            if st.button(f"{prefix1}출석 ({p_count}명)", key="btn_p", help="클릭하여 출석자만 보기"):
+                st.session_state.current_filter = "전체" if f_status == "출석" else "출석"
+                st.rerun()
+                
+        with col2:
+            prefix2 = "🟡 " if f_status == "지각" else ""
+            if st.button(f"{prefix2}지각 ({l_count}명)", key="btn_l", help="클릭하여 지각자만 보기"):
+                st.session_state.current_filter = "전체" if f_status == "지각" else "지각"
+                st.rerun()
+                
+        with col3:
+            prefix3 = "🔴 " if f_status == "결석" else ""
+            if st.button(f"{prefix3}결석 ({a_count}명)", key="btn_a", help="클릭하여 결석자만 보기"):
+                st.session_state.current_filter = "전체" if f_status == "결석" else "결석"
+                st.rerun()
+                
+        with col4:
+            prefix4 = "🔵 " if f_status == "식사" else ""
+            if st.button(f"{prefix4}식사 ({m_count}명)", key="btn_m", help="클릭하여 식사자만 보기"):
+                st.session_state.current_filter = "전체" if f_status == "식사" else "식사"
+                st.rerun()
+                
+        with col5:
+            prefix5 = "⚪ " if f_status == "미체크" else ""
+            if st.button(f"{prefix5}미체크 ({u_count}명)", key="btn_u", help="클릭하여 미체크자만 보기"):
+                st.session_state.current_filter = "전체" if f_status == "미체크" else "미체크"
+                st.rerun()
+        
+        # ── 필터링 연동 데이터 바인딩 ──────────────────────────────────
+        f_status = st.session_state.current_filter
+        
+        if f_status == "출석":
+            filtered_df = merged[merged["status"] == "출석"]
+            title_text = "🟢 [출석] 상태인 인원만 표시 중"
+        elif f_status == "지각":
+            filtered_df = merged[merged["status"] == "지각"]
+            title_text = "🟡 [지각] 상태인 인원만 표시 중"
+        elif f_status == "결석":
+            filtered_df = merged[merged["status"] == "결석"]
+            title_text = "🔴 [결석] 상태인 인원만 표시 중"
+        elif f_status == "식사":
+            filtered_df = merged[merged["meal"] == True]
+            title_text = "🍚 [식사 신청] 인원만 표시 중"
+        elif f_status == "미체크":
+            filtered_df = merged[merged["status"] == "미체크"]
+            title_text = "⚪ [미체크] 상태인 인원만 표시 중"
+        else:
+            filtered_df = merged
+            title_text = f"📝 전체 명단 표시 중 ({date_key})"
+            
+        st.write("---")
+        
+        st.markdown(f"""
+            <div class="filter-box">
+                <strong>{title_text}</strong> (현황 수치를 한 번 더 누르면 전체 명단으로 돌아옵니다.)<br>
+                💡 {', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'}
+            </div>
+        """, unsafe_allow_html=True)
+        st.write("")
+
+        display_df = filtered_df[["id", "name", "position", "status", "meal", "reason"]].copy()
+        display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
+        
+        edited_df = st.data_editor(
+            display_df,
+            column_config={
+                "ID": None, 
+                "이름": st.column_config.TextColumn(disabled=True),
+                "포지션": st.column_config.TextColumn(disabled=True),
+                "출석 상태": st.column_config.SelectboxColumn(options=["출석", "지각", "결석", "미체크"], required=True),
+                "🍚 식사 여부": st.column_config.CheckboxColumn(),
+                "지각/결석 사유": st.column_config.TextColumn() 
+            },
+            width="stretch",
+            key=f"editor_{date_key}_{f_status}"
+        )
+        
+        if st.button("💾 출석 현황 실시간 저장", type="primary", width="stretch"):
+            new_attend_rows = []
+            for _, row in edited_df.iterrows():
+                new_attend_rows.append({
+                    "date": date_key,
+                    "id": str(row["ID"]),
+                    "status": row["출석 상태"],
+                    "reason": str(row["지각/결석 사유"]),
+                    "meal": bool(row["🍚 식사 여부"])
+                })
+            
+            for nr in new_attend_rows:
+                idx = attend_df[(attend_df["date"] == date_key) & (attend_df["id"] == nr["id"])].index
+                if not idx.empty:
+                    attend_df.loc[idx, ["status", "reason", "meal"]] = [nr["status"], nr["reason"], nr["meal"]]
+                else:
+                    attend_df = pd.concat([attend_df, pd.DataFrame([nr])], ignore_index=True)
+                    
+            attend_df["id"] = attend_df["id"].astype(str)
+            
+            try:
+                conn.update(spreadsheet=clean_url, worksheet="attendance", data=attend_df)
+                st.session_state.attend_db = attend_df
+                st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
+            except Exception as e:
+                st.session_state.attend_db = attend_df
+                st.success("💾 로컬 세션에 임시 저장되었습니다.")
+                
+            time.sleep(1)
+            st.rerun()
+
+# ==========================================
+#  TAB 2: 예배자 관리
+# ==========================================
+with tab_members:
+    st.subheader("👥 등록된 예배자 명단")
+    
+    if st.session_state.members_db.empty:
+        st.write("등록된 예배자가 없습니다.")
+    else:
+        view_m_df = st.session_state.members_db.copy()
+        view_m_df.index = view_m_df.index + 1
+        st.dataframe(view_m_df[["name", "position"]].rename(columns={"name":"이름", "position":"포지션"}), width="stretch")
+    
+    st.write("---")
+    
+    m_sub_tab1, m_sub_tab2, m_sub_tab3 = st.tabs(["➕ 예배자 추가", "✏️ 정보 수정", "🗑️ 예배자 삭제"])
+    
+    with m_sub_tab1:
+        with st.form("add_member_form", clear_on_submit=True):
+            new_name = st.text_input("새로운 예배자 이름 *")
+            new_pos = st.selectbox("포지션 선택", POSITIONS, key="add_pos")
+            
+            if st.form_submit_button("예배자 신규 등록"):
+                if not new_name.strip():
+                    st.error("이름을 입력해 주세요.")
+                elif not st.session_state.members_db.empty and new_name in st.session_state.members_db["name"].values:
+                    st.warning(f"'{new_name}'은(는) 이미 등록된 이름입니다.")
+                else:
+                    new_id = str(int(time.time() * 1000))
+                    new_row = pd.DataFrame([{"id": new_id, "name": new_name, "position": new_pos}])
+                    updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
+                    updated_members["id"] = updated_members["id"].astype(str)
+                    
+                    try:
+                        conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
+                        st.session_state.members_db = updated_members
+                        st.success(f"👥 {new_name} 님이 성공적으로 등록되었습니다!")
+                    except:
+                        st.session_state.members_db = updated_members
+                        st.success(f"👥 {new_name} 님이 임시 등록되었습니다.")
+                    time.sleep(1)
+                    st.rerun()
+
+    with m_sub_tab2:
+        if st.session_state.members_db.empty:
+            st.write("수정할 인원이 없습니다.")
+        else:
+            edit_target = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="edit_tgt")
+            target_row = st.session_state.members_db[st.session_state.members_db["name"] == edit_target].iloc[0]
+            
+            with st.form("edit_member_form"):
+                edit_name = st.text_input("이름 수정", value=target_row["name"])
+                try:
+                    default_pos_idx = POSITIONS.index(target_row["position"])
+                except:
+                    default_pos_idx = 0
+                edit_pos = st.selectbox("포지션 수정", POSITIONS, index=default_pos_idx, key="edit_pos")
+                
+                if st.form_submit_button("정보 수정 완료"):
+                    if not edit_name.strip():
+                        st.error("이름은 비워둘 수 없습니다.")
+                    else:
+                        updated_members = st.session_state.members_db.copy()
+                        idx = updated_members[updated_members["id"] == target_row["id"]].index[0]
+                        updated_members.at[idx, "name"] = edit_name
+                        updated_members.at[idx, "position"] = edit_pos
+                        updated_members["id"] = updated_members["id"].astype(str)
+                        
+                        try:
+                            conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
+                            st.session_state.members_db = updated_members
+                            st.success(f"✏️ {edit_target} 님의 정보가 수정되었습니다.")
+                        except:
+                            st.session_state.members_db = updated_members
+                            st.success(f"✏️ {edit_target} 님의 정보가 임시 수정되었습니다.")
+                        time.sleep(1)
+                        st.rerun()
+
+    with m_sub_tab3:
+        if st.session_state.members_db.empty:
+            st.write("삭제할 인원이 없습니다.")
+        else:
+            delete_target = st.selectbox("삭제할 대상 선택", st.session_state.members_db["name"].values, key="del_tgt")
+            st.warning(f"⚠️ '{delete_target}' 님을 명단에서 삭제하시겠습니까?")
+            
+            if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
+                updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
+                updated_members["id"] = updated_members["id"].astype(str)
+                try:
+                    conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
+                    st.session_state.members_db = updated_members
+                    st.success(f"🗑️ '{delete_target}' 님이 명단에서 완전히 삭제되었습니다.")
+                except:
+                    st.session_state.members_db = updated_members
+                    st.success(f"🗑️ '{delete_target}' 님이 임시 삭제되었습니다.")
+                    
+                time.sleep(1)
+                st.rerun()
