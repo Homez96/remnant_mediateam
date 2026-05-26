@@ -16,6 +16,9 @@ if "members_db" not in st.session_state:
     st.session_state.members_db = pd.DataFrame(columns=["id", "name", "position"])
 if "attend_db" not in st.session_state:
     st.session_state.attend_db = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
+# ✨ 클릭 상태를 저장할 세션 스테이트 초기화 (기본값: 전체보기)
+if "current_filter" not in st.session_state:
+    st.session_state.current_filter = "전체"
 
 try:
     from streamlit_gsheets import GSheetsConnection
@@ -42,7 +45,7 @@ except Exception as e:
             {"id": "3", "name": "이영희", "position": "자막"},
         ])
 
-# ── 3. 공통 변수 및 디자인 ──────────────────────────────────────────
+# ── 3. 공통 변수 및 디자인 (클릭 가능한 메트릭 스타일 포함) ─────────
 POSITIONS = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "PD", "TD",
              "노출", "자막", "LED", "조명", "사진 촬영", "릴스", "FD", "음향"]
 
@@ -50,7 +53,38 @@ st.markdown("""
     <style>
     .main-title { font-size:28px; font-weight:bold; color:#5038B0; text-align:center; margin-bottom:5px; }
     .sub-title { font-size:14px; color:#666666; text-align:center; margin-bottom:20px; }
-    .filter-box { background-color: #F1F3FA; padding: 15px; border-radius: 10px; margin-top: 15px; border-left: 5px solid #5038B0; }
+    .filter-box { background-color: #F1F3FA; padding: 12px; border-radius: 10px; margin-top: 10px; border-left: 5px solid #5038B0; font-size: 14px; }
+    
+    /* 🎨 버튼형 메트릭 스타일 정의 */
+    div.stButton > button.metric-btn {
+        width: 100%;
+        background-color: #ffffff;
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 10px 5px;
+        transition: all 0.2s ease;
+        text-align: center;
+        box-shadow: 0px 2px 4px rgba(0,0,0,0.02);
+    }
+    div.stButton > button.metric-btn:hover {
+        border-color: #5038B0;
+        background-color: #F8FAFC;
+        transform: translateY(-2px);
+    }
+    /* 🎯 현재 선택된 메트릭 하이라이트 효과 */
+    div.stButton > button.metric-btn-active {
+        width: 100%;
+        background-color: #5038B0 !important;
+        color: white !important;
+        border: 1px solid #5038B0;
+        border-radius: 10px;
+        padding: 10px 5px;
+        text-align: center;
+        box-shadow: 0px 4px 6px rgba(80, 56, 176, 0.2);
+    }
+    div.stButton > button.metric-btn-active p {
+        color: white !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -63,8 +97,13 @@ date_key = str(selected_date)
 
 tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
 
+# 날짜가 바뀌면 필터를 '전체'로 리셋 처리하여 꼬임 방지
+if "last_date" not in st.session_state or st.session_state.last_date != date_key:
+    st.session_state.last_date = date_key
+    st.session_state.current_filter = "전체"
+
 # ==========================================
-#  TAB 1: 출석 체크 및 실시간 통계 조회
+#  TAB 1: 출석 체크 (메트릭 클릭 필터 적용)
 # ==========================================
 with tab_attend:
     members_df = st.session_state.members_db.copy()
@@ -84,7 +123,7 @@ with tab_attend:
         merged["reason"] = merged["reason"].fillna("").astype(str)
         merged["meal"] = merged["meal"].apply(lambda x: True if x is True or str(x).lower() == 'true' or x == 1 else False)
         
-        # 📊 상단 현황판 통계 산출
+        # 📊 실시간 통계 계산
         total_count = len(members_df)
         p_count = int((merged["status"] == "출석").sum())
         l_count = int((merged["status"] == "지각").sum())
@@ -92,55 +131,81 @@ with tab_attend:
         m_count = int(merged["meal"].sum())
         u_count = total_count - (p_count + l_count + a_count)
         
-        # 메트릭 대시보드 표시
+        # ── 🎯 [핵심] 클릭 가능한 대시보드 메트릭 구현 ──────────────────
         col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("출석", f"{p_count}명")
-        col2.metric("지각", f"{l_count}명")
-        col3.metric("결석", f"{a_count}명")
-        col4.metric("식사", f"{m_count}명")
-        col5.metric("미체크", f"{u_count}명")
         
-        # ✨ [신규 기능] 통계별 명단 확인용 필터 툴바
-        st.write("")
-        view_option = st.radio(
-            "🔍 명단 모아보기 필터",
-            ["전체 명단 보기", f"출석자 ({p_count}명)", f"지각자 ({l_count}명)", f"결석자 ({a_count}명)", f"식사 신청자 ({m_count}명)", f"미체크자 ({u_count}명)"],
-            horizontal=True
-        )
+        # 각 메트릭이 활성화(선택) 상태인지 판단하여 스타일 클래스 부여
+        f_status = st.session_state.current_filter
         
-        # 선택한 통계 탭에 따라 명단 필터링 처리
-        if "출석자" in view_option:
+        with col1:
+            label1 = f"출석\n\n{p_count}명"
+            if st.button(label1, key="btn_p", help="클릭하여 출석자만 보기", 
+                         class_name="metric-btn-active" if f_status == "출석" else "metric-btn"):
+                st.session_state.current_filter = "전체" if f_status == "출석" else "출석"
+                st.rerun()
+                
+        with col2:
+            label2 = f"지각\n\n{l_count}명"
+            if st.button(label2, key="btn_l", help="클릭하여 지각자만 보기", 
+                         class_name="metric-btn-active" if f_status == "지각" else "metric-btn"):
+                st.session_state.current_filter = "전체" if f_status == "지각" else "지각"
+                st.rerun()
+                
+        with col3:
+            label3 = f"결석\n\n{a_count}명"
+            if st.button(label3, key="btn_a", help="클릭하여 결석자만 보기", 
+                         class_name="metric-btn-active" if f_status == "결석" else "metric-btn"):
+                st.session_state.current_filter = "전체" if f_status == "결석" else "결석"
+                st.rerun()
+                
+        with col4:
+            label4 = f"식사\n\n{m_count}명"
+            if st.button(label4, key="btn_m", help="클릭하여 식사자만 보기", 
+                         class_name="metric-btn-active" if f_status == "식사" else "metric-btn"):
+                st.session_state.current_filter = "전체" if f_status == "식사" else "식사"
+                st.rerun()
+                
+        with col5:
+            label5 = f"미체크\n\n{u_count}명"
+            if st.button(label5, key="btn_u", help="클릭하여 미체크자만 보기", 
+                         class_name="metric-btn-active" if f_status == "미체크" else "metric-btn"):
+                st.session_state.current_filter = "전체" if f_status == "미체크" else "미체크"
+                st.rerun()
+        
+        # ── 선택된 필터 상태에 따라 데이터 필터링 ────────────────────────
+        f_status = st.session_state.current_filter # 리런 후 상태 갱신
+        
+        if f_status == "출석":
             filtered_df = merged[merged["status"] == "출석"]
-            title_text = "🟢 현재 출석 상태인 인원"
-        elif "지각자" in view_option:
+            title_text = "🟢 [출석] 상태인 인원만 표시 중"
+        elif f_status == "지각":
             filtered_df = merged[merged["status"] == "지각"]
-            title_text = "🟡 현재 지각 상태인 인원"
-        elif "결석자" in view_option:
+            title_text = "🟡 [지각] 상태인 인원만 표시 중"
+        elif f_status == "결석":
             filtered_df = merged[merged["status"] == "결석"]
-            title_text = "🔴 현재 결석 상태인 인원"
-        elif "식사 신청자" in view_option:
+            title_text = "🔴 [결석] 상태인 인원만 표시 중"
+        elif f_status == "식사":
             filtered_df = merged[merged["meal"] == True]
-            title_text = "🍚 오늘 식사하는 인원"
-        elif "미체크자" in view_option:
+            title_text = "🍚 [식사 신청] 인원만 표시 중"
+        elif f_status == "미체크":
             filtered_df = merged[merged["status"] == "미체크"]
-            title_text = "⚪ 아직 출석 체크가 안 된 인원"
+            title_text = "⚪ [미체크] 상태인 인원만 표시 중"
         else:
             filtered_df = merged
-            title_text = f"📝 전체 체크 명단 ({date_key})"
+            title_text = f"📝 전체 명단 표시 중 ({date_key})"
             
         st.write("---")
         
-        # 필터링된 결과가 있을 때만 별도 요약 박스 노출
-        if view_option != "전체 명단 보기":
-            st.markdown(f"""
-                <div class="filter-box">
-                    <strong>{title_text}</strong><br>
-                    {', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'}
-                </div>
-            """, unsafe_allow_html=True)
-            st.write("")
+        # 필터링 뱃지 안내판 표시
+        st.markdown(f"""
+            <div class="filter-box">
+                <strong>{title_text}</strong> (현황판 수치를 한 번 더 누르면 전체 명단으로 돌아옵니다.)<br>
+                💡 {', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'}
+            </div>
+        """, unsafe_allow_html=True)
+        st.write("")
 
-        # 메인 데이터 에디터 명단 테이블 (필터링된 명단만 표에 노출)
+        # 메인 데이터 표출 (필터 결과가 실시간으로 표에 바인딩됨)
         display_df = filtered_df[["id", "name", "position", "status", "meal", "reason"]].copy()
         display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
         
@@ -155,7 +220,7 @@ with tab_attend:
                 "지각/결석 사유": st.column_config.TextColumn() 
             },
             width="stretch",
-            key=f"editor_{date_key}_{view_option}" # 필터 전환 시 표가 초기화/리프레시 되도록 키 유동 처리
+            key=f"editor_{date_key}_{f_status}"
         )
         
         if st.button("💾 출석 현황 실시간 저장", type="primary", width="stretch"):
@@ -169,7 +234,6 @@ with tab_attend:
                     "meal": bool(row["🍚 식사 여부"])
                 })
             
-            # 수정한 데이터 반영 및 병합
             for nr in new_attend_rows:
                 idx = attend_df[(attend_df["date"] == date_key) & (attend_df["id"] == nr["id"])].index
                 if not idx.empty:
