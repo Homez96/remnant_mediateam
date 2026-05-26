@@ -20,12 +20,9 @@ if "attend_db" not in st.session_state:
 try:
     from streamlit_gsheets import GSheetsConnection
     
-    # Secrets 설정 기반으로 연결 오브젝트 생성
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
     clean_url = "https://docs.google.com/spreadsheets/d/1584S2jzLNFlSJHAgNOBo_w6HjwMwlJ7pUei4jVqeJrU"
     
-    # 워크시트(탭) 읽어오기
     sheets_members = conn.read(spreadsheet=clean_url, worksheet="members", ttl=0)
     sheets_attend = conn.read(spreadsheet=clean_url, worksheet="attendance", ttl=0)
     
@@ -53,6 +50,7 @@ st.markdown("""
     <style>
     .main-title { font-size:28px; font-weight:bold; color:#5038B0; text-align:center; margin-bottom:5px; }
     .sub-title { font-size:14px; color:#666666; text-align:center; margin-bottom:20px; }
+    .filter-box { background-color: #F1F3FA; padding: 15px; border-radius: 10px; margin-top: 15px; border-left: 5px solid #5038B0; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -66,7 +64,7 @@ date_key = str(selected_date)
 tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
 
 # ==========================================
-#  TAB 1: 출석 체크
+#  TAB 1: 출석 체크 및 실시간 통계 조회
 # ==========================================
 with tab_attend:
     members_df = st.session_state.members_db.copy()
@@ -82,14 +80,11 @@ with tab_attend:
         
         merged = pd.merge(members_df, current_attend, on="id", how="left")
         
-        # 🚨 [형식 호환성 에러 해결] 데이터 타입을 명시적으로 지정하여 에러 방지
         merged["status"] = merged["status"].fillna("미체크").astype(str)
         merged["reason"] = merged["reason"].fillna("").astype(str)
-        
-        # 식사 여부는 무조건 Boolean(True/False) 형식으로 강제 변환하여 체크박스 충돌 방지
         merged["meal"] = merged["meal"].apply(lambda x: True if x is True or str(x).lower() == 'true' or x == 1 else False)
         
-        # 현황판 통계
+        # 📊 상단 현황판 통계 산출
         total_count = len(members_df)
         p_count = int((merged["status"] == "출석").sum())
         l_count = int((merged["status"] == "지각").sum())
@@ -97,6 +92,7 @@ with tab_attend:
         m_count = int(merged["meal"].sum())
         u_count = total_count - (p_count + l_count + a_count)
         
+        # 메트릭 대시보드 표시
         col1, col2, col3, col4, col5 = st.columns(5)
         col1.metric("출석", f"{p_count}명")
         col2.metric("지각", f"{l_count}명")
@@ -104,13 +100,50 @@ with tab_attend:
         col4.metric("식사", f"{m_count}명")
         col5.metric("미체크", f"{u_count}명")
         
-        st.write("---")
-        st.markdown(f"##### 👇 **{date_key}** 출석 체크 명단")
+        # ✨ [신규 기능] 통계별 명단 확인용 필터 툴바
+        st.write("")
+        view_option = st.radio(
+            "🔍 명단 모아보기 필터",
+            ["전체 명단 보기", f"출석자 ({p_count}명)", f"지각자 ({l_count}명)", f"결석자 ({a_count}명)", f"식사 신청자 ({m_count}명)", f"미체크자 ({u_count}명)"],
+            horizontal=True
+        )
         
-        display_df = merged[["id", "name", "position", "status", "meal", "reason"]].copy()
+        # 선택한 통계 탭에 따라 명단 필터링 처리
+        if "출석자" in view_option:
+            filtered_df = merged[merged["status"] == "출석"]
+            title_text = "🟢 현재 출석 상태인 인원"
+        elif "지각자" in view_option:
+            filtered_df = merged[merged["status"] == "지각"]
+            title_text = "🟡 현재 지각 상태인 인원"
+        elif "결석자" in view_option:
+            filtered_df = merged[merged["status"] == "결석"]
+            title_text = "🔴 현재 결석 상태인 인원"
+        elif "식사 신청자" in view_option:
+            filtered_df = merged[merged["meal"] == True]
+            title_text = "🍚 오늘 식사하는 인원"
+        elif "미체크자" in view_option:
+            filtered_df = merged[merged["status"] == "미체크"]
+            title_text = "⚪ 아직 출석 체크가 안 된 인원"
+        else:
+            filtered_df = merged
+            title_text = f"📝 전체 체크 명단 ({date_key})"
+            
+        st.write("---")
+        
+        # 필터링된 결과가 있을 때만 별도 요약 박스 노출
+        if view_option != "전체 명단 보기":
+            st.markdown(f"""
+                <div class="filter-box">
+                    <strong>{title_text}</strong><br>
+                    {', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'}
+                </div>
+            """, unsafe_allow_html=True)
+            st.write("")
+
+        # 메인 데이터 에디터 명단 테이블 (필터링된 명단만 표에 노출)
+        display_df = filtered_df[["id", "name", "position", "status", "meal", "reason"]].copy()
         display_df.columns = ["ID", "이름", "포지션", "출석 상태", "🍚 식사 여부", "지각/결석 사유"]
         
-        # 컬럼 속성 정의와 데이터 타입 일치화 완료
         edited_df = st.data_editor(
             display_df,
             column_config={
@@ -122,7 +155,7 @@ with tab_attend:
                 "지각/결석 사유": st.column_config.TextColumn() 
             },
             width="stretch",
-            key=f"editor_{date_key}"
+            key=f"editor_{date_key}_{view_option}" # 필터 전환 시 표가 초기화/리프레시 되도록 키 유동 처리
         )
         
         if st.button("💾 출석 현황 실시간 저장", type="primary", width="stretch"):
@@ -136,20 +169,22 @@ with tab_attend:
                     "meal": bool(row["🍚 식사 여부"])
                 })
             
-            if not attend_df.empty and "date" in attend_df.columns:
-                cleaned_attend = attend_df[attend_df["date"] != date_key]
-            else:
-                cleaned_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
-                
-            updated_attend = pd.concat([cleaned_attend, pd.DataFrame(new_attend_rows)], ignore_index=True)
-            updated_attend["id"] = updated_attend["id"].astype(str)
+            # 수정한 데이터 반영 및 병합
+            for nr in new_attend_rows:
+                idx = attend_df[(attend_df["date"] == date_key) & (attend_df["id"] == nr["id"])].index
+                if not idx.empty:
+                    attend_df.loc[idx, ["status", "reason", "meal"]] = [nr["status"], nr["reason"], nr["meal"]]
+                else:
+                    attend_df = pd.concat([attend_df, pd.DataFrame([nr])], ignore_index=True)
+                    
+            attend_df["id"] = attend_df["id"].astype(str)
             
             try:
-                conn.update(spreadsheet=clean_url, worksheet="attendance", data=updated_attend)
-                st.session_state.attend_db = updated_attend
+                conn.update(spreadsheet=clean_url, worksheet="attendance", data=attend_df)
+                st.session_state.attend_db = attend_df
                 st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
-            except:
-                st.session_state.attend_db = updated_attend
+            except Exception as e:
+                st.session_state.attend_db = attend_df
                 st.success("💾 로컬 세션에 임시 저장되었습니다.")
                 
             time.sleep(1)
