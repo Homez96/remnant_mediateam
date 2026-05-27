@@ -19,6 +19,9 @@ if "attend_db" not in st.session_state:
 if "current_filter" not in st.session_state:
     st.session_state.current_filter = "전체"
 
+if "selected_date_val" not in st.session_state:
+    st.session_state.selected_date_val = date.today()
+
 try:
     from streamlit_gsheets import GSheetsConnection
     
@@ -30,21 +33,29 @@ try:
     
     if sheets_members is not None and not sheets_members.empty:
         sheets_members["id"] = sheets_members["id"].astype(str)
+        # ✨ [기능 추가] 가져온 명단을 이름 기준 가나다순으로 정렬
+        sheets_members = sheets_members.sort_values(by="name", ascending=True).reset_index(drop=True)
         st.session_state.members_db = sheets_members
+        
     if sheets_attend is not None and not sheets_attend.empty:
+        sheets_attend["date"] = sheets_attend["date"].astype(str)
         sheets_attend["id"] = sheets_attend["id"].astype(str)
+        sheets_attend["status"] = sheets_attend["status"].fillna("미체크").astype(str)
+        sheets_attend["reason"] = sheets_attend["reason"].fillna("").astype(str)
+        sheets_attend["meal"] = sheets_attend["meal"].apply(lambda x: True if x is True or str(x).lower() == 'true' or x == 1 else False)
         st.session_state.attend_db = sheets_attend
 
 except Exception as e:
     st.error(f"❌ 구글 시트 연결 실패 원인: {str(e)}")
     if len(st.session_state.members_db) == 0:
+        # 가나다순 기본 샘플
         st.session_state.members_db = pd.DataFrame([
-            {"id": "1", "name": "홍길동", "position": "PD"},
             {"id": "2", "name": "김철수", "position": "4번 카메라"},
             {"id": "3", "name": "이영희", "position": "자막"},
+            {"id": "1", "name": "홍길동", "position": "PD"},
         ])
 
-# ── 3. 공통 변수 및 디자인 ──────────────────────────────────────────
+# ── 3. 공통 변수 및 디자인 (다크/라이트 완벽 대응 CSS) ─────────────────
 POSITIONS = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "PD", "TD",
              "노출", "자막", "LED", "조명", "사진 촬영", "릴스", "FD", "음향"]
 
@@ -52,27 +63,17 @@ st.markdown("""
     <style>
     .main-title { font-size:28px; font-weight:bold; color:#5038B0; text-align:center; margin-bottom:5px; }
     .sub-title { font-size:14px; color:#666666; text-align:center; margin-bottom:20px; }
-    .filter-box { background-color: #F1F3FA; padding: 12px; border-radius: 10px; margin-top: 10px; border-left: 5px solid #5038B0; font-size: 14px; }
     
-    /* 🎨 대시보드 버튼 스타일 정의 */
+    /* 🎨 대시보드 버튼 테마 전용 스타일 (다크 모드 글자 유실 방지) */
     div[data-testid="stHorizontalBlock"] div.stButton > button {
         width: 100% !important;
-        background-color: #ffffff;
-        border: 1px solid #E2E8F0;
         border-radius: 10px;
         padding: 8px 2px !important;
         text-align: center;
-        color: #333333;
         transition: all 0.2s ease;
     }
-    
-    div[data-testid="stHorizontalBlock"] div.stButton > button:hover {
-        border-color: #5038B0 !important;
-        background-color: #F8FAFC;
-        color: #5038B0;
-    }
 
-    /* 🎯 선택 활성화 상태 디자인 (배경 보라색 전환) */
+    /* 🎯 필터 선택 활성화 상태 디자인 (보라색 묵시적 강조) */
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟢"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟡"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🔴"],
@@ -82,7 +83,7 @@ st.markdown("""
         color: white !important;
         border-color: #5038B0 !important;
         font-weight: bold !important;
-        box-shadow: 0px 4px 8px rgba(80, 56, 176, 0.25);
+        box-shadow: 0px 4px 8px rgba(80, 56, 176, 0.35);
     }
     </style>
 """, unsafe_allow_html=True)
@@ -91,19 +92,21 @@ st.markdown('<div class="main-title">⛪ 예배 출석 관리</div>', unsafe_all
 st.markdown('<div class="sub-title">모바일과 PC 어디서나 실시간으로 출석을 기록하세요.</div>', unsafe_allow_html=True)
 
 # ── 4. 메인 기능 레이아웃 ───────────────────────────────────────────
-selected_date = st.date_input("📅 예배 날짜 선택", date.today())
+selected_date = st.date_input("📅 예배 날짜 선택", st.session_state.selected_date_val)
 date_key = str(selected_date)
-
-tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
 
 if "last_date" not in st.session_state or st.session_state.last_date != date_key:
     st.session_state.last_date = date_key
+    st.session_state.selected_date_val = selected_date
     st.session_state.current_filter = "전체"
+
+tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
 
 # ==========================================
 #  TAB 1: 출석 체크
 # ==========================================
 with tab_attend:
+    # 매번 가나다순으로 명단을 카피
     members_df = st.session_state.members_db.copy()
     attend_df = st.session_state.attend_db.copy()
     
@@ -115,6 +118,7 @@ with tab_attend:
         else:
             current_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
         
+        # 가나다순으로 보존된 상태에서 출석 기록 병합
         merged = pd.merge(members_df, current_attend, on="id", how="left")
         
         merged["status"] = merged["status"].fillna("미체크").astype(str)
@@ -128,7 +132,7 @@ with tab_attend:
         m_count = int(merged["meal"].sum())
         u_count = total_count - (p_count + l_count + a_count)
         
-        # ── 🎯 메트릭형 버튼 배치 (오타 완벽 수정 완료) ──────────────────
+        # ── 🎯 메트릭형 버튼 배치 ──────────────────────────────────
         col1, col2, col3, col4, col5 = st.columns(5)
         f_status = st.session_state.current_filter
         
@@ -186,12 +190,9 @@ with tab_attend:
             
         st.write("---")
         
-        st.markdown(f"""
-            <div class="filter-box">
-                <strong>{title_text}</strong> (현황 수치를 한 번 더 누르면 전체 명단으로 돌아옵니다.)<br>
-                💡 {', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'}
-            </div>
-        """, unsafe_allow_html=True)
+        # ✨ [가독성 개선] 눈부시거나 안보이는 HTML 대신 다크/라이트 테마에 완벽히 자동 대응하는 내부 컨테이너 적용
+        names_list = ', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'
+        st.info(f"**{title_text}** (현황 수치를 한 번 더 누르면 전체 명단으로 돌아옵니다.)\n\n💡 {names_list}")
         st.write("")
 
         display_df = filtered_df[["id", "name", "position", "status", "meal", "reason"]].copy()
@@ -212,32 +213,40 @@ with tab_attend:
         )
         
         if st.button("💾 출석 현황 실시간 저장", type="primary", width="stretch"):
-            new_attend_rows = []
+            edited_rows = []
             for _, row in edited_df.iterrows():
-                new_attend_rows.append({
+                edited_rows.append({
                     "date": date_key,
                     "id": str(row["ID"]),
-                    "status": row["출석 상태"],
+                    "status": str(row["출석 상태"]),
                     "reason": str(row["지각/결석 사유"]),
                     "meal": bool(row["🍚 식사 여부"])
                 })
+            edited_patch_df = pd.DataFrame(edited_rows)
             
-            for nr in new_attend_rows:
-                idx = attend_df[(attend_df["date"] == date_key) & (attend_df["id"] == nr["id"])].index
-                if not idx.empty:
-                    attend_df.loc[idx, ["status", "reason", "meal"]] = [nr["status"], nr["reason"], nr["meal"]]
-                else:
-                    attend_df = pd.concat([attend_df, pd.DataFrame([nr])], ignore_index=True)
-                    
-            attend_df["id"] = attend_df["id"].astype(str)
+            if not attend_df.empty and "id" in attend_df.columns:
+                target_ids = edited_patch_df["id"].unique()
+                remain_attend_df = attend_df[
+                    ~((attend_df["date"] == date_key) & (attend_df["id"].isin(target_ids)))
+                ]
+                updated_attend = pd.concat([remain_attend_df, edited_patch_df], ignore_index=True)
+            else:
+                updated_attend = edited_patch_df
+            
+            updated_attend["date"] = updated_attend["date"].astype(str)
+            updated_attend["id"] = updated_attend["id"].astype(str)
+            updated_attend["status"] = updated_attend["status"].astype(str)
+            updated_attend["reason"] = updated_attend["reason"].astype(str)
+            updated_attend["meal"] = updated_attend["meal"].astype(bool)
             
             try:
-                conn.update(spreadsheet=clean_url, worksheet="attendance", data=attend_df)
-                st.session_state.attend_db = attend_df
+                conn.update(spreadsheet=clean_url, worksheet="attendance", data=updated_attend)
+                st.session_state.attend_db = updated_attend
                 st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
             except Exception as e:
-                st.session_state.attend_db = attend_df
-                st.success("💾 로컬 세션에 임시 저장되었습니다.")
+                st.session_state.attend_db = updated_attend
+                st.error(f"⚠️ 저장 실패 원인: {str(e)}")
+                st.success("💾 대신 로컬 세션에 임시 저장되었습니다.")
                 
             time.sleep(1)
             st.rerun()
@@ -275,6 +284,9 @@ with tab_members:
                     updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
                     updated_members["id"] = updated_members["id"].astype(str)
                     
+                    # 가나다순 재정렬 후 동기화
+                    updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
+                    
                     try:
                         conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                         st.session_state.members_db = updated_members
@@ -289,6 +301,7 @@ with tab_members:
         if st.session_state.members_db.empty:
             st.write("수정할 인원이 없습니다.")
         else:
+            # 선택 창 이름 목록도 명단이 이미 정렬되어 있으므로 가나다순으로 노출됩니다.
             edit_target = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="edit_tgt")
             target_row = st.session_state.members_db[st.session_state.members_db["name"] == edit_target].iloc[0]
             
@@ -310,6 +323,9 @@ with tab_members:
                         updated_members.at[idx, "position"] = edit_pos
                         updated_members["id"] = updated_members["id"].astype(str)
                         
+                        # 가나다순 재정렬
+                        updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
+                        
                         try:
                             conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                             st.session_state.members_db = updated_members
@@ -330,6 +346,10 @@ with tab_members:
             if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
                 updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
                 updated_members["id"] = updated_members["id"].astype(str)
+                
+                # 삭제 후 재정렬 보존
+                updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
+                
                 try:
                     conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                     st.session_state.members_db = updated_members
