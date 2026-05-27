@@ -22,18 +22,28 @@ if "current_filter" not in st.session_state:
 if "selected_date_val" not in st.session_state:
     st.session_state.selected_date_val = date.today()
 
+# ✨ [할당량 초과 방지] 강제 리프레시 플래그 세션 초기화
+if "force_refresh" not in st.session_state:
+    st.session_state.force_refresh = False
+
 try:
     from streamlit_gsheets import GSheetsConnection
     
     conn = st.connection("gsheets", type=GSheetsConnection)
     clean_url = "https://docs.google.com/spreadsheets/d/1584S2jzLNFlSJHAgNOBo_w6HjwMwlJ7pUei4jVqeJrU"
     
-    sheets_members = conn.read(spreadsheet=clean_url, worksheet="members", ttl=0)
-    sheets_attend = conn.read(spreadsheet=clean_url, worksheet="attendance", ttl=0)
+    # ✨ [핵심 수정] 강제 새로고침 플래그가 켜졌을 때만 ttl=0으로 읽고, 평소에는 5분 캐싱(ttl=300) 적용
+    current_ttl = 0 if st.session_state.force_refresh else 300
+    
+    sheets_members = conn.read(spreadsheet=clean_url, worksheet="members", ttl=current_ttl)
+    sheets_attend = conn.read(spreadsheet=clean_url, worksheet="attendance", ttl=current_ttl)
+    
+    # 강제로 새로 읽어왔다면 플래그를 다시 꺼줍니다.
+    if st.session_state.force_refresh:
+        st.session_state.force_refresh = False
     
     if sheets_members is not None and not sheets_members.empty:
         sheets_members["id"] = sheets_members["id"].astype(str)
-        # ✨ [기능 추가] 가져온 명단을 이름 기준 가나다순으로 정렬
         sheets_members = sheets_members.sort_values(by="name", ascending=True).reset_index(drop=True)
         st.session_state.members_db = sheets_members
         
@@ -46,16 +56,16 @@ try:
         st.session_state.attend_db = sheets_attend
 
 except Exception as e:
-    st.error(f"❌ 구글 시트 연결 실패 원인: {str(e)}")
-    if len(st.session_state.members_db) == 0:
-        # 가나다순 기본 샘플
+    # 구글이 완전히 차단했을 때 앱이 뻗지 않고 기존 세션 데이터나 샘플 데이터로 구동되도록 방어막 구축
+    if st.session_state.members_db.empty:
+        st.error(f"⚠️ 구글 호출 제한 상태입니다. 잠시 후 자동 정상화됩니다. (오류: {str(e)})")
         st.session_state.members_db = pd.DataFrame([
             {"id": "2", "name": "김철수", "position": "4번 카메라"},
             {"id": "3", "name": "이영희", "position": "자막"},
             {"id": "1", "name": "홍길동", "position": "PD"},
         ])
 
-# ── 3. 공통 변수 및 디자인 (다크/라이트 완벽 대응 CSS) ─────────────────
+# ── 3. 공통 변수 및 디자인 ──────────────────────────────────────────
 POSITIONS = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "PD", "TD",
              "노출", "자막", "LED", "조명", "사진 촬영", "릴스", "FD", "음향"]
 
@@ -64,7 +74,6 @@ st.markdown("""
     .main-title { font-size:28px; font-weight:bold; color:#5038B0; text-align:center; margin-bottom:5px; }
     .sub-title { font-size:14px; color:#666666; text-align:center; margin-bottom:20px; }
     
-    /* 🎨 대시보드 버튼 테마 전용 스타일 (다크 모드 글자 유실 방지) */
     div[data-testid="stHorizontalBlock"] div.stButton > button {
         width: 100% !important;
         border-radius: 10px;
@@ -73,7 +82,6 @@ st.markdown("""
         transition: all 0.2s ease;
     }
 
-    /* 🎯 필터 선택 활성화 상태 디자인 (보라색 묵시적 강조) */
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟢"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🟡"],
     div[data-testid="stHorizontalBlock"] div.stButton > button[aria-label*="🔴"],
@@ -106,7 +114,6 @@ tab_attend, tab_members = st.tabs(["📋 출석 체크", "👥 예배자 관리"
 #  TAB 1: 출석 체크
 # ==========================================
 with tab_attend:
-    # 매번 가나다순으로 명단을 카피
     members_df = st.session_state.members_db.copy()
     attend_df = st.session_state.attend_db.copy()
     
@@ -118,7 +125,6 @@ with tab_attend:
         else:
             current_attend = pd.DataFrame(columns=["date", "id", "status", "reason", "meal"])
         
-        # 가나다순으로 보존된 상태에서 출석 기록 병합
         merged = pd.merge(members_df, current_attend, on="id", how="left")
         
         merged["status"] = merged["status"].fillna("미체크").astype(str)
@@ -136,39 +142,38 @@ with tab_attend:
         col1, col2, col3, col4, col5 = st.columns(5)
         f_status = st.session_state.current_filter
         
+        # 중요: 이 버튼들을 누를 때는 구글 시트를 찌르지 않고(force_refresh=False) 내부 세션 필터만 바꿉니다.
         with col1:
             prefix1 = "🟢 " if f_status == "출석" else ""
-            if st.button(f"{prefix1}출석 ({p_count}명)", key="btn_p", help="클릭하여 출석자만 보기"):
+            if st.button(f"{prefix1}출석 ({p_count}명)", key="btn_p"):
                 st.session_state.current_filter = "전체" if f_status == "출석" else "출석"
                 st.rerun()
                 
         with col2:
             prefix2 = "🟡 " if f_status == "지각" else ""
-            if st.button(f"{prefix2}지각 ({l_count}명)", key="btn_l", help="클릭하여 지각자만 보기"):
+            if st.button(f"{prefix2}지각 ({l_count}명)", key="btn_l"):
                 st.session_state.current_filter = "전체" if f_status == "지각" else "지각"
                 st.rerun()
                 
         with col3:
             prefix3 = "🔴 " if f_status == "결석" else ""
-            if st.button(f"{prefix3}결석 ({a_count}명)", key="btn_a", help="클릭하여 결석자만 보기"):
+            if st.button(f"{prefix3}결석 ({a_count}명)", key="btn_a"):
                 st.session_state.current_filter = "전체" if f_status == "결석" else "결석"
                 st.rerun()
                 
         with col4:
             prefix4 = "🔵 " if f_status == "식사" else ""
-            if st.button(f"{prefix4}식사 ({m_count}명)", key="btn_m", help="클릭하여 식사자만 보기"):
+            if st.button(f"{prefix4}식사 ({m_count}명)", key="btn_m"):
                 st.session_state.current_filter = "전체" if f_status == "식사" else "식사"
                 st.rerun()
                 
         with col5:
             prefix5 = "⚪ " if f_status == "미체크" else ""
-            if st.button(f"{prefix5}미체크 ({u_count}명)", key="btn_u", help="클릭하여 미체크자만 보기"):
+            if st.button(f"{prefix5}미체크 ({u_count}명)", key="btn_u"):
                 st.session_state.current_filter = "전체" if f_status == "미체크" else "미체크"
                 st.rerun()
         
         # ── 필터링 연동 데이터 바인딩 ──────────────────────────────────
-        f_status = st.session_state.current_filter
-        
         if f_status == "출석":
             filtered_df = merged[merged["status"] == "출석"]
             title_text = "🟢 [출석] 상태인 인원만 표시 중"
@@ -190,7 +195,6 @@ with tab_attend:
             
         st.write("---")
         
-        # ✨ [가독성 개선] 눈부시거나 안보이는 HTML 대신 다크/라이트 테마에 완벽히 자동 대응하는 내부 컨테이너 적용
         names_list = ', '.join(filtered_df['name'].values) if not filtered_df.empty else '해당하는 인원이 없습니다.'
         st.info(f"**{title_text}** (현황 수치를 한 번 더 누르면 전체 명단으로 돌아옵니다.)\n\n💡 {names_list}")
         st.write("")
@@ -242,6 +246,8 @@ with tab_attend:
             try:
                 conn.update(spreadsheet=clean_url, worksheet="attendance", data=updated_attend)
                 st.session_state.attend_db = updated_attend
+                # ✨ 저장이 성공하면 다음 렌더링 때 구글 시트에서 무조건 새로 긁어오도록 동기화 플래그 ON
+                st.session_state.force_refresh = True
                 st.success("🎉 데이터베이스(구글 시트)에 실시간으로 저장되었습니다!")
             except Exception as e:
                 st.session_state.attend_db = updated_attend
@@ -283,13 +289,12 @@ with tab_members:
                     new_row = pd.DataFrame([{"id": new_id, "name": new_name, "position": new_pos}])
                     updated_members = pd.concat([st.session_state.members_db, new_row], ignore_index=True)
                     updated_members["id"] = updated_members["id"].astype(str)
-                    
-                    # 가나다순 재정렬 후 동기화
                     updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
                     
                     try:
                         conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                         st.session_state.members_db = updated_members
+                        st.session_state.force_refresh = True  # 강제 갱신 플래그 ON
                         st.success(f"👥 {new_name} 님이 성공적으로 등록되었습니다!")
                     except:
                         st.session_state.members_db = updated_members
@@ -301,7 +306,6 @@ with tab_members:
         if st.session_state.members_db.empty:
             st.write("수정할 인원이 없습니다.")
         else:
-            # 선택 창 이름 목록도 명단이 이미 정렬되어 있으므로 가나다순으로 노출됩니다.
             edit_target = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="edit_tgt")
             target_row = st.session_state.members_db[st.session_state.members_db["name"] == edit_target].iloc[0]
             
@@ -322,13 +326,12 @@ with tab_members:
                         updated_members.at[idx, "name"] = edit_name
                         updated_members.at[idx, "position"] = edit_pos
                         updated_members["id"] = updated_members["id"].astype(str)
-                        
-                        # 가나다순 재정렬
                         updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
                         
                         try:
                             conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                             st.session_state.members_db = updated_members
+                            st.session_state.force_refresh = True  # 강제 갱신 플래그 ON
                             st.success(f"✏️ {edit_target} 님의 정보가 수정되었습니다.")
                         except:
                             st.session_state.members_db = updated_members
@@ -346,13 +349,12 @@ with tab_members:
             if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
                 updated_members = st.session_state.members_db[st.session_state.members_db["name"] != delete_target]
                 updated_members["id"] = updated_members["id"].astype(str)
-                
-                # 삭제 후 재정렬 보존
                 updated_members = updated_members.sort_values(by="name", ascending=True).reset_index(drop=True)
                 
                 try:
                     conn.update(spreadsheet=clean_url, worksheet="members", data=updated_members)
                     st.session_state.members_db = updated_members
+                    st.session_state.force_refresh = True  # 강제 갱신 플래그 ON
                     st.success(f"🗑️ '{delete_target}' 님이 명단에서 완전히 삭제되었습니다.")
                 except:
                     st.session_state.members_db = updated_members
