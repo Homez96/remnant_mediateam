@@ -223,7 +223,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 merged["meal"] = merged["meal"].fillna(False)
                 merged["reason"] = merged["reason"].fillna("")
 
-                # 💡 실시간 상단 인원 통계 계산
+                # 실시간 상단 인원 통계 계산
                 p_c = (merged["status"] == "출석").sum()
                 l_c = (merged["status"] == "지각").sum()
                 a_c = (merged["status"] == "결석").sum()
@@ -245,104 +245,109 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 m_btn(cols[3], "식사", int(m_c), "b_m", "식사")
                 m_btn(cols[4], "미체크", u_c, "b_u", "미체크")
 
-                # 상단 토글 활성화 시 명단만 노출
+                # 💡 [변경 사항] 명단 요약 텍스트 출력을 주석 처리 혹은 제거하여 보이지 않게 처리했습니다.
+                # f_s = st.session_state.current_filter
+                # if f_s == "식사":
+                #     filtered_names = merged[merged["meal"] == True]["name"].values
+                # elif f_s != "전체":
+                #     filtered_names = merged[merged["status"] == f_s]["name"].values
+                # else:
+                #     filtered_names = merged["name"].values
+                # st.info(f"**{f_s} 명단 요약** : {', '.join(filtered_names) if len(filtered_names) > 0 else '없음'}")
+
+                # 💡 실제 필터 기능은 아래 폼 내부의 드롭다운 명단(member_names_list) 구성을 통해 정상 작동합니다.
                 f_s = st.session_state.current_filter
                 if f_s == "식사":
-                    filtered_names = merged[merged["meal"] == True]["name"].values
+                    filtered_rows = merged[merged["meal"] == True]
                 elif f_s != "전체":
-                    filtered_names = merged[merged["status"] == f_s]["name"].values
+                    filtered_rows = merged[merged["status"] == f_s]
                 else:
-                    filtered_names = merged["name"].values
+                    filtered_rows = merged
 
-                st.info(f"**{f_s} 명단 요약** : {', '.join(filtered_names) if len(filtered_names) > 0 else '없음'}")
+                member_names_list = filtered_rows["name"].tolist()
 
                 st.write("---")
                 st.subheader("✍️ 개별 출석 기록 폼")
 
-                # ──────────────────────────────────────────────────────────────────
-                # 🛠️ [리팩토링 핵심] 순차 선택형 및 포지션 변경 유연화 UI 구현 시작
-                # ──────────────────────────────────────────────────────────────────
-                member_names_list = merged["name"].tolist()
+                if not member_names_list:
+                    st.warning(f"⚠️ 선택하신 '{f_s}' 상태에 해당하는 팀원이 없습니다. 상단 버튼을 다시 눌러 전체 명단을 확인하세요.")
+                else:
+                    with st.form(key=f"individual_attendance_form_{date_key}", clear_on_submit=False):
+                        
+                        # ① 이름 선택 드롭다운 (필터에 맞춰 실시간 연동되어 나타남)
+                        chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
+                        
+                        # 선택된 사용자의 기존 데이터 로우 추출
+                        user_current_row = merged[merged["name"] == chosen_name].iloc[0]
+                        
+                        # ② 포지션 선택 드롭다운 (기존 포지션이 기본 선택되지만 자유롭게 변경 가능)
+                        base_position = str(user_current_row["position"]).strip()
+                        if base_position in POSITIONS:
+                            pos_default_idx = POSITIONS.index(base_position)
+                        else:
+                            pos_default_idx = 0
+                        
+                        chosen_position = st.selectbox("🎥 2. 오늘 담당 포지션 선택", POSITIONS, index=pos_default_idx)
+                        
+                        # ③ 출석 상태 선택 드롭다운
+                        STATUS_OPTIONS = ["출석", "지각", "결석", "미체크"]
+                        base_status = str(user_current_row["status"]).strip()
+                        status_default_idx = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
+                        
+                        chosen_status = st.selectbox("📊 3. 출석 상태 변경", STATUS_OPTIONS, index=status_default_idx)
+                        
+                        # ④ 사유 입력 칸
+                        base_reason = str(user_current_row["reason"]).strip()
+                        chosen_reason = st.text_input("📝 4. 특이사항 / 사유 입력", value=base_reason, placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.")
+                        
+                        # ⑤ 식사 신청 여부 체크박스
+                        base_meal_bool = bool(user_current_row["meal"])
+                        chosen_meal = st.checkbox("🍴 5. 오늘 식사 신청 여부", value=base_meal_bool)
+                        
+                        st.write("")
+                        save_submit_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
 
-                with st.form(key=f"individual_attendance_form_{date_key}", clear_on_submit=False):
-                    
-                    # ① 이름 선택 드롭다운
-                    chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
-                    
-                    # 선택된 사용자의 기존 데이터 로우 추출
-                    user_current_row = merged[merged["name"] == chosen_name].iloc[0]
-                    
-                    # ② 포지션 선택 드롭다운 (기존 포지션이 기본 선택되지만 자유롭게 변경 가능)
-                    # members 시트에 저장되어 있는 기본 포지션을 가져옴
-                    base_position = str(user_current_row["position"]).strip()
-                    if base_position in POSITIONS:
-                        pos_default_idx = POSITIONS.index(base_position)
-                    else:
-                        pos_default_idx = 0
-                    
-                    chosen_position = st.selectbox("🎥 2. 오늘 담당 포지션 선택", POSITIONS, index=pos_default_idx)
-                    
-                    # ③ 출석 상태 선택 드롭다운
-                    STATUS_OPTIONS = ["출석", "지각", "결석", "미체크"]
-                    base_status = str(user_current_row["status"]).strip()
-                    status_default_idx = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
-                    
-                    chosen_status = st.selectbox("📊 3. 출석 상태 변경", STATUS_OPTIONS, index=status_default_idx)
-                    
-                    # ④ 사유 입력 칸
-                    base_reason = str(user_current_row["reason"]).strip()
-                    chosen_reason = st.text_input("📝 4. 특이사항 / 사유 입력", value=base_reason, placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.")
-                    
-                    # ⑤ 식사 신청 여부 체크박스
-                    base_meal_bool = bool(user_current_row["meal"])
-                    chosen_meal = st.checkbox("🍴 5. 오늘 식사 신청 여부", value=base_meal_bool)
-                    
-                    st.write("")
-                    save_submit_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
+                        if save_submit_btn:
+                            if not require_conn():
+                                st.stop()
+                            
+                            target_id = user_current_row["id"]
 
-                    if save_submit_btn:
-                        if not require_conn():
-                            st.stop()
-                        
-                        target_id = user_current_row["id"]
+                            # ── [동기화 작업 1] 구글 members 시트의 포지션 정보 실시간 수정 ──
+                            raw_members = st.session_state.members_db.copy()
+                            raw_members["id"] = raw_members["id"].astype(str).apply(clean_id_string)
+                            
+                            m_idx = raw_members[raw_members["id"] == target_id].index[0]
+                            raw_members.at[m_idx, "position"] = chosen_position
+                            
+                            upload_members_df = pd.DataFrame(raw_members, columns=["id", "name", "position"]).astype(str)
+                            conn.update(spreadsheet=clean_url, worksheet="members", data=upload_members_df)
+                            st.session_state.members_db = raw_members
 
-                        # ── [동기화 작업 1] 구글 members 시트의 포지션 정보 실시간 수정 ──
-                        # 선택된 포지션이 기존 배치와 다르다면 members 기본 정보도 실시간 업데이트해 줍니다.
-                        raw_members = st.session_state.members_db.copy()
-                        raw_members["id"] = raw_members["id"].astype(str).apply(clean_id_string)
-                        
-                        m_idx = raw_members[raw_members["id"] == target_id].index[0]
-                        raw_members.at[m_idx, "position"] = chosen_position
-                        
-                        upload_members_df = pd.DataFrame(raw_members, columns=["id", "name", "position"]).astype(str)
-                        conn.update(spreadsheet=clean_url, worksheet="members", data=upload_members_df)
-                        st.session_state.members_db = raw_members
-
-                        # ── [동기화 작업 2] 구글 attendance 시트 기록 생성 및 수정 ──
-                        old_db = st.session_state.attend_db.copy()
-                        old_db["id"] = old_db["id"].astype(str).apply(clean_id_string)
-                        
-                        # 오늘 날짜에 해당 팀원의 기존 데이터 행이 있으면 지우고 새로운 값으로 대체 병합
-                        remain = old_db[(old_db["date"] != date_key) | (old_db["id"] != target_id)] if not old_db.empty else pd.DataFrame()
-                        
-                        new_record = pd.DataFrame([{
-                            "date": date_key,
-                            "id": target_id,
-                            "status": chosen_status,
-                            "reason": chosen_reason.strip(),
-                            "meal": chosen_meal
-                        }])
-                        
-                        new_db = pd.concat([remain, new_record], ignore_index=True)
-                        upload_attend_df = pd.DataFrame(new_db, columns=["date", "id", "status", "reason", "meal"])
-                        conn.update(spreadsheet=clean_url, worksheet="attendance", data=upload_attend_df)
-                        
-                        st.session_state.attend_db = upload_attend_df
-                        st.session_state.force_refresh = True
-                        
-                        st.success(f"🎉 {chosen_name} 님의 정보(포지션: {chosen_position} / 상태: {chosen_status})가 구글 시트에 안전하게 저장되었습니다!")
-                        time.sleep(0.6)
-                        st.rerun()
+                            # ── [동기화 작업 2] 구글 attendance 시트 기록 생성 및 수정 ──
+                            old_db = st.session_state.attend_db.copy()
+                            old_db["id"] = old_db["id"].astype(str).apply(clean_id_string)
+                            
+                            remain = old_db[(old_db["date"] != date_key) | (old_db["id"] != target_id)] if not old_db.empty else pd.DataFrame()
+                            
+                            new_record = pd.DataFrame([{
+                                "date": date_key,
+                                "id": target_id,
+                                "status": chosen_status,
+                                "reason": chosen_reason.strip(),
+                                "meal": chosen_meal
+                            }])
+                            
+                            new_db = pd.concat([remain, new_record], ignore_index=True)
+                            upload_attend_df = pd.DataFrame(new_db, columns=["date", "id", "status", "reason", "meal"])
+                            conn.update(spreadsheet=clean_url, worksheet="attendance", data=upload_attend_df)
+                            
+                            st.session_state.attend_db = upload_attend_df
+                            st.session_state.force_refresh = True
+                            
+                            st.success(f"🎉 {chosen_name} 님의 정보(포지션: {chosen_position} / 상태: {chosen_status})가 구글 시트에 안전하게 저장되었습니다!")
+                            time.sleep(0.6)
+                            st.rerun()
 
         with tab_mem:
             st.dataframe(st.session_state.members_db[["name", "position"]], use_container_width=True, hide_index=True)
