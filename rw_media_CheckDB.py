@@ -6,11 +6,11 @@ import requests
 
 # ── 0. 외부 스토리지(ImgBB 또는 Freeimage) 설정 ──────────────────────
 # ⚠️ 중요: 발급받은 API Key를 아래 따옴표 안에 넣어주세요!
-API_KEY = "여기에_발급받은_API_Key_입력"
+API_KEY = "6f1ec1ad61b9dc8ff1f25abda8fe4096"
 
 # 💡 사용하실 서비스에 맞는 주소의 주석(#)을 해제하고 사용하세요. (기본값: ImgBB)
 UPLOAD_URL = "https://api.imgbb.com/1/upload"               # ImgBB 사용 시
-# UPLOAD_URL = "https://freeimage.host/api/1/upload"       # Freeimage 사용 시
+
 
 def upload_image_to_storage(file_buffer):
     """ImgBB 또는 Freeimage API를 이용해 이미지를 업로드하고 영구 URL을 반환하는 함수"""
