@@ -51,8 +51,9 @@ _defaults = {
     "view_post_id":      None,
     "comm_write_mode":   False,
     "sel_channel_id":    None,   # None = 전체보기, str = 선택된 채널 id
-    "sel_sub_cat_id":    None,   # None = 채널 전체, str = 선택된 세부 카테고리 id
+    "sel_sub_cat_id":    None,   # None = 채널 전체, str = 선택된 폴더 id
     "show_add_ch":       False,  # 채널 추가 입력란 표시 여부
+    "show_add_sc":       False,  # 폴더(세부 카테고리) 추가 입력란 표시 여부
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -130,7 +131,6 @@ def load_community_data():
             df_cm = conn.read(spreadsheet=SHEET_URL, worksheet="comments",   ttl=ttl)
             st.session_state.members_db = clean_df(df_m,  {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
             cat_db = clean_df(df_c, {"id":"str","name":"str","parent_id":"str"})
-            # parent_id 컬럼이 없으면 추가 (구 데이터 호환)
             if "parent_id" not in cat_db.columns:
                 cat_db["parent_id"] = ""
             st.session_state.cat_db     = cat_db
@@ -378,21 +378,45 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════
-# 7. 팀 커뮤니티 게시판 — Slack 스타일 UI v2
+# 7. 팀 커뮤니티 게시판 — Slack 스타일 UI v3
 #    변경사항:
-#    - 채널 드래그 순서 변경 (streamlit-sortables 필요: pip install streamlit-sortables)
-#    - 새 글 작성 버튼은 채널 진입 후에만 표시
-#    - 채널 추가 버튼만 존재 (관리 기능 제거)
-#    - 채널 내 세부 카테고리 지원 (categories 시트에 parent_id 컬럼 필요)
+#    - 아웃채널(사이드바): 채널 목록 자체가 드래그 가능 (multi_containers)
+#      → "현재 채널" 컨테이너로 끌어다 놓으면 선택, "채널 목록" 안에서 끌면 순서 변경
+#    - 인채널(메인): 노션 페이지 스타일 폴더(세부 카테고리) UI
+#      → 폴더 추가/삭제는 모두 인채널 영역에서
 # ══════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
     st.markdown("""
     <style>
-    /* 왼쪽 채널 패널 배경 */
+    /* 아웃채널 배경 (사이드바 컬럼) */
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child {
         background-color: #3f0e40;
         min-height: 80vh;
+        padding: 8px 6px;
+    }
+    /* 사이드바 내부 텍스트 색상 */
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child .stMarkdown p,
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child h3 {
+        color: #fff;
+    }
+    /* sort_items 컨테이너 헤더 흰색 */
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child h2 {
+        color: #fff !important; font-size:12px !important;
+        letter-spacing:1px; text-transform:uppercase;
+        margin: 8px 4px 4px !important;
+    }
+    /* sort_items 아이템 스타일 */
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child ul {
+        padding-left: 0 !important; list-style: none;
+    }
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child li {
+        background:#4a154b; color:#fff; padding:8px 12px;
+        margin:3px 0; border-radius:4px; cursor:grab;
+        font-size:14px; border:1px solid #5e3060;
+    }
+    section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child li:hover {
+        background:#5a1d5b;
     }
     /* 게시글 카드 */
     .post-title   { font-size:15px; font-weight:600; color:#1d1c1d; }
@@ -403,11 +427,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
         border-left:3px solid #e8e8e8;
         padding:6px 12px; margin:6px 0;
         background:#fafafa; border-radius:0 6px 6px 0;
-    }
-    /* 세부 카테고리 버튼 들여쓰기 효과 */
-    div[data-sub-cat] > div > button {
-        padding-left: 24px !important;
-        font-size: 13px !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -423,7 +442,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
         cat_df    = st.session_state.cat_db.copy()
         full_p_db = st.session_state.post_db.copy()
 
-        # parent_id 컬럼 보장
         if "parent_id" not in cat_df.columns:
             cat_df["parent_id"] = ""
 
@@ -435,86 +453,40 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
             return df[df["parent_id"] == ch_id].reset_index(drop=True)
 
         def get_display_posts():
-            ch_id = st.session_state.sel_channel_id
-            sc_id = st.session_state.sel_sub_cat_id
-            if ch_id is None:
+            ch_id_l = st.session_state.sel_channel_id
+            sc_id_l = st.session_state.sel_sub_cat_id
+            if ch_id_l is None:
                 return full_p_db
-            if sc_id is not None:
-                return full_p_db[full_p_db["category_id"] == sc_id]
-            sub_ids = cat_df[cat_df["parent_id"] == ch_id]["id"].tolist()
-            return full_p_db[full_p_db["category_id"].isin([ch_id] + sub_ids)]
+            if sc_id_l is not None:
+                return full_p_db[full_p_db["category_id"] == sc_id_l]
+            sub_ids = cat_df[cat_df["parent_id"] == ch_id_l]["id"].tolist()
+            return full_p_db[full_p_db["category_id"].isin([ch_id_l] + sub_ids)]
 
         def save_categories(new_cat_df):
             conn.update(
                 spreadsheet=SHEET_URL, worksheet="categories",
                 data=pd.DataFrame(new_cat_df, columns=["id","name","parent_id"]).astype(str),
             )
-            st.session_state.cat_db = new_cat_df
+            st.session_state.cat_db = new_cat_df.reset_index(drop=True)
             st.session_state.force_refresh = True
 
-        channels = get_channels(cat_df)
+        channels = get_channels(st.session_state.cat_db)
+        ch_id = st.session_state.sel_channel_id
+        sc_id = st.session_state.sel_sub_cat_id
 
         col_sidebar, col_main = st.columns([1, 3.5], gap="small")
 
         # ════════════════════════════════════════════════════════════
-        # 왼쪽 사이드바
+        # 아웃채널 영역 (사이드바)
         # ════════════════════════════════════════════════════════════
         with col_sidebar:
             st.markdown(
-                "<div style='color:#fff;font-size:18px;font-weight:700;padding:12px 8px 4px;'>⛪ RW 미디어팀</div>",
+                "<div style='color:#fff;font-size:18px;font-weight:700;padding:8px 8px 4px;'>⛪ RW 미디어팀</div>",
                 unsafe_allow_html=True,
             )
 
-            # ── 채널 순서 변경 (드래그) ─────────────────────────────
-            if not channels.empty:
-                with st.expander("🔀 채널 순서 변경 (드래그)"):
-                    try:
-                        from streamlit_sortables import sort_items
-                        ch_names = list(channels["name"].values)
-                        sorted_names = sort_items(ch_names, direction="vertical", key="ch_drag_sort")
-                        if sorted_names != ch_names and len(sorted_names) == len(ch_names):
-                            nm_map = {r["name"]: r.to_dict() for _, r in channels.iterrows()}
-                            new_channels = pd.DataFrame([nm_map[n] for n in sorted_names if n in nm_map]).reset_index(drop=True)
-                            non_ch = cat_df[cat_df["parent_id"] != ""]
-                            new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
-                            if require_conn():
-                                save_categories(new_cat)
-                                st.rerun()
-                    except ImportError:
-                        st.caption("드래그 기능: `pip install streamlit-sortables`")
-                        # 대체: ↑↓ 버튼
-                        for i, (_, ch) in enumerate(channels.iterrows()):
-                            ca, cb, cc = st.columns([1, 1, 5])
-                            if i > 0 and ca.button("↑", key=f"up_{ch['id']}"):
-                                ch_list = list(channels.iterrows())
-                                rows    = [r.to_dict() for _, r in ch_list]
-                                rows[i], rows[i-1] = rows[i-1], rows[i]
-                                new_channels = pd.DataFrame(rows).reset_index(drop=True)
-                                non_ch = cat_df[cat_df["parent_id"] != ""]
-                                new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
-                                if require_conn():
-                                    save_categories(new_cat)
-                                    st.rerun()
-                            if i < len(channels)-1 and cb.button("↓", key=f"dn_{ch['id']}"):
-                                ch_list = list(channels.iterrows())
-                                rows    = [r.to_dict() for _, r in ch_list]
-                                rows[i], rows[i+1] = rows[i+1], rows[i]
-                                new_channels = pd.DataFrame(rows).reset_index(drop=True)
-                                non_ch = cat_df[cat_df["parent_id"] != ""]
-                                new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
-                                if require_conn():
-                                    save_categories(new_cat)
-                                    st.rerun()
-                            cc.markdown(f"<span style='color:#fff'>#{ch['name']}</span>", unsafe_allow_html=True)
-
-            st.markdown(
-                "<div style='color:#ccc8d0;font-size:11px;font-weight:700;letter-spacing:1px;"
-                "text-transform:uppercase;padding:8px 10px 4px;'>채널</div>",
-                unsafe_allow_html=True,
-            )
-
-            # ── 전체 보기 ───────────────────────────────────────────
-            is_all = st.session_state.sel_channel_id is None
+            # 전체 보기 버튼
+            is_all = ch_id is None
             if st.button(
                 ("🔵 " if is_all else "   ") + "# 전체 보기",
                 key="btn_ch_all",
@@ -527,66 +499,110 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 st.session_state.view_post_id    = None
                 st.rerun()
 
-            # ── 채널 목록 (현재 순서 기준) ──────────────────────────
-            # sort_items 사용 시 채널 순서가 변경되면 cat_df가 갱신되므로
-            # 이 시점의 channels는 항상 최신 순서를 반영
-            channels = get_channels(st.session_state.cat_db)  # 갱신된 순서 반영
+            # 드래그 가능한 채널 목록 (현재 채널 / 모든 채널 두 컨테이너)
+            if not channels.empty:
+                ch_names_all = list(channels["name"].values)
+                current_name = None
+                if ch_id:
+                    row = channels[channels["id"] == ch_id]
+                    if not row.empty:
+                        current_name = row["name"].values[0]
 
-            for _, ch in channels.iterrows():
-                is_sel = st.session_state.sel_channel_id == ch["id"]
-                label  = ("🔵 " if is_sel else "   ") + f"# {ch['name']}"
-                if st.button(label, key=f"btn_ch_{ch['id']}", use_container_width=True,
-                             type="primary" if is_sel else "secondary"):
-                    st.session_state.sel_channel_id  = ch["id"]
-                    st.session_state.sel_sub_cat_id  = None
-                    st.session_state.comm_write_mode = False
-                    st.session_state.view_post_id    = None
-                    st.rerun()
+                if current_name and current_name in ch_names_all:
+                    current_items = [current_name]
+                    other_items   = [n for n in ch_names_all if n != current_name]
+                else:
+                    current_items = []
+                    other_items   = list(ch_names_all)
 
-                # 선택된 채널의 세부 카테고리
-                if is_sel:
-                    sub_cats = get_sub_cats(st.session_state.cat_db, ch["id"])
-                    for _, sc in sub_cats.iterrows():
-                        is_sc = st.session_state.sel_sub_cat_id == sc["id"]
-                        sc_label = ("  🔸 " if is_sc else "  ▸  ") + sc["name"]
-                        col_sc, col_sc_del = st.columns([4, 1])
-                        with col_sc:
-                            if st.button(sc_label, key=f"btn_sc_{sc['id']}", use_container_width=True,
-                                         type="primary" if is_sc else "secondary"):
-                                st.session_state.sel_sub_cat_id  = sc["id"]
+                try:
+                    from streamlit_sortables import sort_items
+
+                    result = sort_items(
+                        [
+                            {"header": "🔵 현재 채널",            "items": current_items},
+                            {"header": "📂 채널 (드래그로 이동)", "items": other_items},
+                        ],
+                        multi_containers=True,
+                        direction="vertical",
+                        key="ch_sort_mc",
+                    )
+
+                    new_curr = result[0]["items"] if len(result) > 0 else []
+                    new_oth  = result[1]["items"] if len(result) > 1 else []
+
+                    if new_curr != current_items or new_oth != other_items:
+                        # 현재 채널 컨테이너에 여러 개 들어오면 첫 번째만 현재로, 나머지는 목록으로
+                        if new_curr:
+                            new_sel_name = new_curr[0]
+                            overflow     = new_curr[1:]
+                            final_others = overflow + new_oth
+                        else:
+                            new_sel_name = None
+                            final_others = new_oth
+
+                        new_sel_id = None
+                        if new_sel_name:
+                            mch = channels[channels["name"] == new_sel_name]
+                            if not mch.empty:
+                                new_sel_id = mch["id"].values[0]
+
+                        final_order = ([new_sel_name] if new_sel_name else []) + final_others
+                        name_to_row = {r["name"]: r.to_dict() for _, r in channels.iterrows()}
+                        new_channels_df = pd.DataFrame(
+                            [name_to_row[n] for n in final_order if n in name_to_row]
+                        ).reset_index(drop=True)
+                        non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
+                        new_cat_df = pd.concat([new_channels_df, non_ch], ignore_index=True)
+
+                        if require_conn():
+                            save_categories(new_cat_df)
+                            st.session_state.sel_channel_id  = new_sel_id
+                            st.session_state.sel_sub_cat_id  = None
+                            st.session_state.comm_write_mode = False
+                            st.session_state.view_post_id    = None
+                            st.rerun()
+
+                except ImportError:
+                    # 폴백: 클릭형 버튼 + ↑↓ 순서 변경
+                    st.caption("⚠️ 드래그 기능: `pip install streamlit-sortables`")
+                    for i, (_, ch) in enumerate(channels.iterrows()):
+                        is_sel = ch_id == ch["id"]
+                        c_btn, c_up, c_dn = st.columns([5, 1, 1])
+                        with c_btn:
+                            if st.button(
+                                ("🔵 " if is_sel else "   ") + f"# {ch['name']}",
+                                key=f"btn_ch_{ch['id']}",
+                                use_container_width=True,
+                                type="primary" if is_sel else "secondary",
+                            ):
+                                st.session_state.sel_channel_id  = ch["id"]
+                                st.session_state.sel_sub_cat_id  = None
                                 st.session_state.comm_write_mode = False
                                 st.session_state.view_post_id    = None
                                 st.rerun()
-                        with col_sc_del:
-                            if st.button("✕", key=f"del_sc_{sc['id']}", help="세부 카테고리 삭제"):
+                        with c_up:
+                            if i > 0 and st.button("↑", key=f"up_{ch['id']}", use_container_width=True):
+                                rows = [r.to_dict() for _, r in channels.iterrows()]
+                                rows[i], rows[i-1] = rows[i-1], rows[i]
+                                new_channels = pd.DataFrame(rows).reset_index(drop=True)
+                                non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
+                                new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
                                 if require_conn():
-                                    new_cat = st.session_state.cat_db[st.session_state.cat_db["id"] != sc["id"]].reset_index(drop=True)
                                     save_categories(new_cat)
-                                    if st.session_state.sel_sub_cat_id == sc["id"]:
-                                        st.session_state.sel_sub_cat_id = None
+                                    st.rerun()
+                        with c_dn:
+                            if i < len(channels) - 1 and st.button("↓", key=f"dn_{ch['id']}", use_container_width=True):
+                                rows = [r.to_dict() for _, r in channels.iterrows()]
+                                rows[i], rows[i+1] = rows[i+1], rows[i]
+                                new_channels = pd.DataFrame(rows).reset_index(drop=True)
+                                non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
+                                new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
+                                if require_conn():
+                                    save_categories(new_cat)
                                     st.rerun()
 
-                    # 세부 카테고리 추가
-                    sc_key = f"sc_add_open_{ch['id']}"
-                    if not st.session_state.get(sc_key, False):
-                        if st.button("  + 세부 카테고리 추가", key=f"sc_open_{ch['id']}", use_container_width=True):
-                            st.session_state[sc_key] = True
-                            st.rerun()
-                    else:
-                        sc_inp = st.text_input("세부 카테고리명", key=f"sc_inp_{ch['id']}", placeholder="이름 입력", label_visibility="collapsed")
-                        cs1, cs2 = st.columns(2)
-                        if cs1.button("추가", key=f"sc_confirm_{ch['id']}", type="primary"):
-                            if sc_inp.strip() and require_conn():
-                                new_sc  = pd.DataFrame([{"id": str(int(time.time()*1000)), "name": sc_inp.strip(), "parent_id": ch["id"]}])
-                                new_cat = pd.concat([st.session_state.cat_db, new_sc], ignore_index=True)
-                                save_categories(new_cat)
-                                st.session_state[sc_key] = False
-                                st.rerun()
-                        if cs2.button("취소", key=f"sc_cancel_{ch['id']}"):
-                            st.session_state[sc_key] = False
-                            st.rerun()
-
-            # ── 채널 추가 ───────────────────────────────────────────
+            # 채널 추가
             st.markdown("<hr style='border-color:#5e3060;margin:8px 0;'>", unsafe_allow_html=True)
 
             if not st.session_state.show_add_ch:
@@ -594,11 +610,14 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     st.session_state.show_add_ch = True
                     st.rerun()
             else:
-                new_ch_name = st.text_input("새 채널 이름", key="new_ch_input", placeholder="채널명 입력", label_visibility="collapsed")
+                new_ch_name = st.text_input("새 채널 이름", key="new_ch_input",
+                                            placeholder="채널명 입력", label_visibility="collapsed")
                 ca1, ca2 = st.columns(2)
                 if ca1.button("추가", key="confirm_add_ch", type="primary"):
                     if new_ch_name.strip() and require_conn():
-                        new_ch  = pd.DataFrame([{"id": str(int(time.time()*1000)), "name": new_ch_name.strip(), "parent_id": ""}])
+                        new_ch  = pd.DataFrame([{"id": str(int(time.time()*1000)),
+                                                 "name": new_ch_name.strip(),
+                                                 "parent_id": ""}])
                         new_cat = pd.concat([st.session_state.cat_db, new_ch], ignore_index=True)
                         save_categories(new_cat)
                         st.session_state.show_add_ch = False
@@ -608,13 +627,10 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     st.rerun()
 
         # ════════════════════════════════════════════════════════════
-        # 오른쪽 메인 콘텐츠
+        # 인채널 영역 (메인 콘텐츠)
         # ════════════════════════════════════════════════════════════
         with col_main:
-            ch_id = st.session_state.sel_channel_id
-            sc_id = st.session_state.sel_sub_cat_id
-
-            # 현재 위치 헤더 계산
+            # 현재 위치 헤더
             if ch_id is None:
                 header_text = "전체 보기"
             else:
@@ -623,7 +639,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 if sc_id is not None:
                     sc_row  = st.session_state.cat_db[st.session_state.cat_db["id"] == sc_id]
                     sc_name = sc_row["name"].values[0] if not sc_row.empty else ""
-                    header_text = f"{ch_name}  /  {sc_name}"
+                    header_text = f"{ch_name}  /  📁 {sc_name}"
                 else:
                     header_text = ch_name
 
@@ -632,6 +648,94 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 unsafe_allow_html=True,
             )
             st.markdown("<hr style='margin:4px 0 12px;'>", unsafe_allow_html=True)
+
+            # ── 폴더 영역 (Notion 페이지 스타일) ───────────────────
+            # 채널 진입 + 글쓰기/상세 모드가 아닐 때만 표시
+            show_folders = (
+                ch_id is not None
+                and not st.session_state.comm_write_mode
+                and st.session_state.view_post_id is None
+            )
+            if show_folders:
+                sub_cats = get_sub_cats(st.session_state.cat_db, ch_id)
+
+                st.markdown(
+                    "<div style='color:#3f0e40;font-size:13px;font-weight:600;margin:4px 0;'>📂 폴더 (페이지)</div>",
+                    unsafe_allow_html=True,
+                )
+
+                num_folders = len(sub_cats)
+                total_cells = num_folders + 2  # 전체 + 폴더들 + 추가
+                btn_cols = st.columns(max(total_cells, 4))
+
+                # 전체 폴더
+                is_all_sc = sc_id is None
+                if btn_cols[0].button(
+                    ("📁 " if is_all_sc else "📂 ") + "전체",
+                    key="sc_pill_all",
+                    use_container_width=True,
+                    type="primary" if is_all_sc else "secondary",
+                ):
+                    st.session_state.sel_sub_cat_id = None
+                    st.rerun()
+
+                # 각 폴더
+                for i, (_, sc) in enumerate(sub_cats.iterrows()):
+                    is_active = sc_id == sc["id"]
+                    if btn_cols[i + 1].button(
+                        ("📁 " if is_active else "📂 ") + sc["name"],
+                        key=f"sc_pill_{sc['id']}",
+                        use_container_width=True,
+                        type="primary" if is_active else "secondary",
+                    ):
+                        st.session_state.sel_sub_cat_id = sc["id"]
+                        st.rerun()
+
+                # 폴더 추가 버튼
+                if btn_cols[num_folders + 1].button(
+                    "➕ 폴더",
+                    key="sc_pill_add",
+                    use_container_width=True,
+                ):
+                    st.session_state.show_add_sc = not st.session_state.show_add_sc
+                    st.rerun()
+
+                # 폴더 추가 입력란
+                if st.session_state.show_add_sc:
+                    cf1, cf2, cf3 = st.columns([4, 1, 1])
+                    with cf1:
+                        new_sc_name = st.text_input(
+                            "폴더명", key="new_sc_input",
+                            placeholder="새 폴더(파트) 이름 입력",
+                            label_visibility="collapsed",
+                        )
+                    with cf2:
+                        if st.button("추가", key="confirm_sc", type="primary", use_container_width=True):
+                            if new_sc_name.strip() and require_conn():
+                                new_sc  = pd.DataFrame([{
+                                    "id": str(int(time.time()*1000)),
+                                    "name": new_sc_name.strip(),
+                                    "parent_id": ch_id,
+                                }])
+                                new_cat = pd.concat([st.session_state.cat_db, new_sc], ignore_index=True)
+                                save_categories(new_cat)
+                                st.session_state.show_add_sc = False
+                                st.rerun()
+                    with cf3:
+                        if st.button("취소", key="cancel_sc", use_container_width=True):
+                            st.session_state.show_add_sc = False
+                            st.rerun()
+
+                # 현재 폴더 삭제 (특정 폴더 선택 중일 때만)
+                if sc_id is not None:
+                    if st.button("🗑️ 현재 폴더 삭제", key="del_sc_main", type="secondary"):
+                        if require_conn():
+                            new_cat = st.session_state.cat_db[st.session_state.cat_db["id"] != sc_id].reset_index(drop=True)
+                            save_categories(new_cat)
+                            st.session_state.sel_sub_cat_id = None
+                            st.rerun()
+
+                st.markdown("<hr style='margin:8px 0;'>", unsafe_allow_html=True)
 
             # ── 글쓰기 모드 ─────────────────────────────────────────
             if st.session_state.comm_write_mode:
@@ -642,8 +746,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 st.subheader("✏️ 새 게시글 작성")
 
                 # 글쓰기 카테고리 결정
-                # 세부 카테고리 있으면 세부 카테고리 선택, 없으면 채널 직접
-                cat_options = []  # [(id, label), ...]
+                cat_options = []
                 if ch_id is not None:
                     sub_cats_w = get_sub_cats(st.session_state.cat_db, ch_id)
                     if not sub_cats_w.empty:
@@ -658,7 +761,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         cat_options = [(ch_id, ch_name2)]
                         default_cat_idx = 0
                 else:
-                    # 전체보기에서 글쓰기: 채널 전체 중 선택
                     all_chs = get_channels(st.session_state.cat_db)
                     cat_options = [(r["id"], r["name"]) for _, r in all_chs.iterrows()]
                     default_cat_idx = 0
@@ -668,7 +770,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 else:
                     with st.form("write_post", clear_on_submit=True):
                         cat_labels   = [label for _, label in cat_options]
-                        chosen_label = st.selectbox("게시 위치 선택", cat_labels, index=default_cat_idx)
+                        chosen_label = st.selectbox("게시 위치 (폴더) 선택", cat_labels, index=default_cat_idx)
                         chosen_cat_id = cat_options[cat_labels.index(chosen_label)][0]
 
                         p_title   = st.text_input("제목 *")
@@ -721,10 +823,9 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 if not p_cat.empty:
                     p_cat_row = p_cat.iloc[0]
                     if p_cat_row["parent_id"]:
-                        # 세부 카테고리
                         par = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
                         par_name = par["name"].values[0] if not par.empty else ""
-                        breadcrumb = f"{par_name} / {p_cat_row['name']}"
+                        breadcrumb = f"{par_name} / 📁 {p_cat_row['name']}"
                     else:
                         breadcrumb = p_cat_row["name"]
                 else:
@@ -887,7 +988,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
             # ── 게시글 목록 ─────────────────────────────────────────
             else:
-                # 채널에 진입한 경우에만 새 글 작성 버튼 표시
+                # 채널 진입 시에만 새 글 작성 버튼 표시
                 if ch_id is not None:
                     if st.button("✏️ 새 글 작성", key="btn_write_main", type="primary"):
                         st.session_state.comm_write_mode = True
@@ -897,7 +998,12 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 display_posts = get_display_posts()
 
                 if display_posts.empty:
-                    st.info("📭 이 채널에 아직 게시글이 없습니다. 새 글을 작성해 보세요!")
+                    if ch_id is None:
+                        st.info("📭 게시글이 없습니다.")
+                    elif sc_id is not None:
+                        st.info("📭 이 폴더에 아직 게시글이 없습니다. 새 글을 작성해 보세요!")
+                    else:
+                        st.info("📭 이 채널에 아직 게시글이 없습니다. 폴더(파트)를 만들거나 새 글을 작성해 보세요!")
                 else:
                     for _, post in display_posts[::-1].iterrows():
                         p_cat = st.session_state.cat_db[st.session_state.cat_db["id"] == post["category_id"]]
@@ -906,7 +1012,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             if p_cat_row["parent_id"]:
                                 par = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
                                 par_name = par["name"].values[0] if not par.empty else ""
-                                cat_label = f"{par_name} / {p_cat_row['name']}"
+                                cat_label = f"{par_name} / 📁 {p_cat_row['name']}"
                             else:
                                 cat_label = p_cat_row["name"]
                         else:
