@@ -226,13 +226,13 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 merged["meal"]   = merged["meal"].fillna(False)
                 merged["reason"] = merged["reason"].fillna("")
 
+                # ── 상단 인원 통계 필터 버튼 ────────────────────────
                 p_c = (merged["status"] == "출석").sum()
                 l_c = (merged["status"] == "지각").sum()
                 a_c = (merged["status"] == "결석").sum()
                 u_c = (merged["status"] == "미체크").sum()
                 m_c = int(merged["meal"].sum())
 
-                # 필터 버튼
                 cols = st.columns(5)
                 f_s  = st.session_state.current_filter
 
@@ -242,54 +242,99 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.current_filter = "전체" if f_s == val else val
                         st.rerun()
 
-                m_btn(cols[0], "출석",  p_c, "b_p", "출석")
-                m_btn(cols[1], "지각",  l_c, "b_l", "지각")
-                m_btn(cols[2], "결석",  a_c, "b_a", "결석")
-                m_btn(cols[3], "식사",  m_c, "b_m", "식사")
-                m_btn(cols[4], "미체크",u_c, "b_u", "미체크")
+                m_btn(cols[0], "출석",   p_c, "b_p", "출석")
+                m_btn(cols[1], "지각",   l_c, "b_l", "지각")
+                m_btn(cols[2], "결석",   a_c, "b_a", "결석")
+                m_btn(cols[3], "식사",   m_c, "b_m", "식사")
+                m_btn(cols[4], "미체크", u_c, "b_u", "미체크")
 
-                # 필터 명단 표시 (에디터는 항상 전체)
+                # ── 필터에 따른 이름 목록 구성 ──────────────────────
                 f_s = st.session_state.current_filter
                 if f_s == "식사":
-                    hi = merged[merged["meal"] == True]["name"].values
+                    filtered_rows = merged[merged["meal"] == True]
                 elif f_s != "전체":
-                    hi = merged[merged["status"] == f_s]["name"].values
+                    filtered_rows = merged[merged["status"] == f_s]
                 else:
-                    hi = merged["name"].values
-                st.info(f"**{f_s} 명단** : {', '.join(hi) if len(hi) else '없음'}")
+                    filtered_rows = merged
 
-                display_edit = merged[["id","name","position","status","meal","reason"]].rename(
-                    columns={"name":"이름","position":"포지션","status":"상태","meal":"식사","reason":"사유"}
-                )
-                edit_df = st.data_editor(
-                    display_edit,
-                    column_config={
-                        "id": None,
-                        "상태": st.column_config.SelectboxColumn(options=["출석","지각","결석","미체크"], required=True),
-                    },
-                    key=f"editor_{date_key}",
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                member_names_list = filtered_rows["name"].tolist()
 
-                if st.button("💾 출석 저장", type="primary", use_container_width=True):
-                    if not require_conn(): st.stop()
-                    patch = edit_df.rename(columns={"이름":"name","포지션":"position","상태":"status","식사":"meal","사유":"reason"})
-                    patch["date"] = date_key
-                    patch["id"]   = patch["id"].astype(str).apply(clean_id)
+                st.write("---")
+                st.subheader("✍️ 개별 출석 기록 폼")
 
-                    old_db = st.session_state.attend_db.copy()
-                    old_db["id"] = old_db["id"].astype(str).apply(clean_id)
-                    remain = old_db[old_db["date"] != date_key] if not old_db.empty else pd.DataFrame()
-                    new_db = pd.concat([remain, patch[["date","id","status","reason","meal"]]], ignore_index=True)
+                if not member_names_list:
+                    st.warning(f"⚠️ '{f_s}' 상태에 해당하는 팀원이 없습니다. 상단 버튼을 다시 눌러 전체 명단을 확인하세요.")
+                else:
+                    with st.form(key=f"individual_attendance_form_{date_key}", clear_on_submit=False):
 
-                    upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"])
-                    conn.update(spreadsheet=SHEET_URL, worksheet="attendance", data=upload_df)
-                    st.session_state.attend_db  = upload_df
-                    st.session_state.force_refresh = True
-                    st.success("✅ 저장 완료!")
-                    time.sleep(0.5)
-                    st.rerun()
+                        # ① 이름 선택 (필터 연동)
+                        chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
+
+                        # 선택된 팀원의 기존 데이터 추출
+                        user_row = merged[merged["name"] == chosen_name].iloc[0]
+
+                        # ② 포지션 선택 (기존값 기본 선택)
+                        base_pos = str(user_row["position"]).strip()
+                        pos_idx  = POSITIONS.index(base_pos) if base_pos in POSITIONS else 0
+                        chosen_position = st.selectbox("🎥 2. 오늘 담당 포지션 선택", POSITIONS, index=pos_idx)
+
+                        # ③ 출석 상태 선택
+                        STATUS_OPTIONS   = ["출석", "지각", "결석", "미체크"]
+                        base_status      = str(user_row["status"]).strip()
+                        status_idx       = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
+                        chosen_status    = st.selectbox("📊 3. 출석 상태 변경", STATUS_OPTIONS, index=status_idx)
+
+                        # ④ 사유 입력
+                        chosen_reason = st.text_input(
+                            "📝 4. 특이사항 / 사유 입력",
+                            value=str(user_row["reason"]).strip(),
+                            placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.",
+                        )
+
+                        # ⑤ 식사 신청 여부
+                        chosen_meal = st.checkbox("🍴 5. 오늘 식사 신청 여부", value=bool(user_row["meal"]))
+
+                        st.write("")
+                        save_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
+
+                        if save_btn:
+                            if not require_conn(): st.stop()
+                            target_id = user_row["id"]
+
+                            # members 시트 포지션 업데이트
+                            raw_members = st.session_state.members_db.copy()
+                            raw_members["id"] = raw_members["id"].astype(str).apply(clean_id)
+                            m_idx = raw_members[raw_members["id"] == target_id].index[0]
+                            raw_members.at[m_idx, "position"] = chosen_position
+                            conn.update(
+                                spreadsheet=SHEET_URL, worksheet="members",
+                                data=pd.DataFrame(raw_members, columns=["id","name","position"]).astype(str),
+                            )
+                            st.session_state.members_db = raw_members
+
+                            # attendance 시트 해당 인원 해당 날짜 행 교체
+                            old_db = st.session_state.attend_db.copy()
+                            old_db["id"] = old_db["id"].astype(str).apply(clean_id)
+                            remain = old_db[
+                                ~((old_db["date"] == date_key) & (old_db["id"] == target_id))
+                            ] if not old_db.empty else pd.DataFrame()
+
+                            new_record = pd.DataFrame([{
+                                "date":   date_key,
+                                "id":     target_id,
+                                "status": chosen_status,
+                                "reason": chosen_reason.strip(),
+                                "meal":   chosen_meal,
+                            }])
+                            new_db = pd.concat([remain, new_record], ignore_index=True)
+                            upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"])
+                            conn.update(spreadsheet=SHEET_URL, worksheet="attendance", data=upload_df)
+
+                            st.session_state.attend_db = upload_df
+                            st.session_state.force_refresh = True
+                            st.success(f"🎉 {chosen_name} 님 저장 완료! (포지션: {chosen_position} / 상태: {chosen_status})")
+                            time.sleep(0.6)
+                            st.rerun()
 
         # ── 예배자 관리 탭 ───────────────────────────────────────────
         with tab_mem:
