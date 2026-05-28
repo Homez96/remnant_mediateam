@@ -96,8 +96,6 @@ try:
     st.session_state.members_db = clean_df(df_m, {"id":"str", "name":"str", "position":"str"}).sort_values("name").reset_index(drop=True)
     st.session_state.attend_db = clean_df(df_a, {"date":"str", "id":"str", "status":"str", "meal":"bool", "reason":"str"})
     st.session_state.cat_db = clean_df(df_c, {"id":"str", "name":"str"})
-    
-    # ✨ 중요: posts 탭의 image_urls와 links가 빈 칸(NaN)이어도 무조건 문자로 깔끔하게 변환하도록 고정
     st.session_state.post_db = clean_df(df_p, {"id":"str", "category_id":"str", "title":"str", "content":"str", "links":"str", "image_urls":"str", "created_at":"str"})
     st.session_state.comm_db = clean_df(df_cm, {"id":"str", "post_id":"str", "author":"str", "content":"str", "created_at":"str"})
 
@@ -239,10 +237,17 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
     b_tab_view, b_tab_write, b_tab_admin = st.tabs(["📖 게시글 보기", "📝 글쓰기", "⚙️ 카테고리 관리"])
     cat_df = st.session_state.cat_db
     
-    # 6-1. 카테고리 관리
+    # 6-1. 카테고리 관리 (UI 대폭 개편)
     with b_tab_admin:
         st.subheader("⚙️ 카테고리 설정 (최대 10개)")
-        st.dataframe(cat_df, hide_index=True, width="stretch")
+        
+        # ✨ [개선 1] 복잡한 데이터 표 대신 한눈에 보는 직관적인 목록으로 대체
+        if not cat_df.empty:
+            cat_list_str = " | ".join([f"📁 {name}" for name in cat_df["name"].values])
+            st.markdown(f"**현재 생성된 카테고리:** \n`{cat_list_str}`")
+        else:
+            st.info("현재 생성된 카테고리가 없습니다. 아래에서 새로 만들어보세요!")
+        st.write("")
         
         c1, c2 = st.columns(2)
         with c1:
@@ -315,7 +320,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             time.sleep(1)
                             st.rerun()
 
-    # 6-3. 게시글 보기 및 댓글 CRUD
+    # 6-3. 게시글 보기 및 댓글 CRUD (명단 연동 추가)
     with b_tab_view:
         if cat_df.empty: st.info("생성된 카테고리가 없습니다.")
         else:
@@ -350,7 +355,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     else:
                         st.write(post['content'])
                         
-                        # ✨ 빈 값 처리 방어벽 강화
                         if isinstance(post['image_urls'], str) and post['image_urls'].strip():
                             for url in post['image_urls'].split(","):
                                 if url.strip(): st.image(url.strip(), use_container_width=True)
@@ -375,17 +379,40 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 updated_cm = comm_db[comm_db["id"] != citem["id"]]
                                 conn.update(spreadsheet=clean_url, worksheet="comments", data=updated_cm)
                                 st.session_state.force_refresh = True
-                                st.rerun()
+                                rerun()
                     
+                    # 💬 댓글 작성 폼
                     with st.form(f"comm_{post['id']}", clear_on_submit=True):
-                        c_auth = st.text_input("작성자명", key=f"at_{post['id']}")
-                        c_txt = st.text_area("댓글 달기", key=f"tx_{post['id']}", height=70)
+                        st.markdown("**댓글 달기**")
+                        
+                        # ✨ [개선 2] 예배 출석 관리 명단 연동 콤보박스 생성
+                        member_names = ["선택하세요"] + list(st.session_state.members_db["name"].values) + ["[직접 입력]"]
+                        selected_author = st.selectbox("작성자 선택", member_names, key=f"sel_auth_{post['id']}")
+                        
+                        # 직접 입력을 선택했을 때만 텍스트를 적을 수 있는 보조 칸 노출
+                        custom_auth = ""
+                        if selected_author == "[직접 입력]":
+                            custom_auth = st.text_input("작성자명 직접 입력", key=f"cust_auth_{post['id']}", placeholder="이름을 입력하세요.")
+                        
+                        c_txt = st.text_area("내용 입력", key=f"tx_{post['id']}", height=70, placeholder="따뜻한 댓글을 남겨주세요.")
+                        
                         if st.form_submit_button("댓글 등록"):
-                            if c_auth.strip() and c_txt.strip():
+                            # 최종 작성자 이름 확정 처리
+                            final_author = ""
+                            if selected_author == "[직접 입력]":
+                                final_author = custom_auth.strip()
+                            elif selected_author != "선택하세요":
+                                final_author = selected_author
+                                
+                            if not final_author:
+                                st.error("❌ 작성자를 선택하거나 직접 입력해 주세요.")
+                            elif not c_txt.strip():
+                                st.error("❌ 댓글 내용을 입력해 주세요.")
+                            else:
                                 new_c = pd.DataFrame([{
                                     "id": str(int(time.time()*1000)), 
                                     "post_id": post["id"], 
-                                    "author": c_auth.strip(),
+                                    "author": final_author,
                                     "content": c_txt.strip(), 
                                     "created_at": datetime.now().strftime("%m-%d %H:%M")
                                 }])
