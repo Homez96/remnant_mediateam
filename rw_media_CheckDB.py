@@ -5,7 +5,7 @@ import time
 import requests
 
 # ── 0. 외부 스토리지(ImgBB 또는 Freeimage) 설정 ──────────────────────
-API_KEY = "여기에_발급받은_API_Key_입력"
+API_KEY = "6f1ec1ad61b9dc8ff1f25abda8fe4096"
 UPLOAD_URL = "https://api.imgbb.com/1/upload"
 
 def upload_image_to_storage(file_buffer):
