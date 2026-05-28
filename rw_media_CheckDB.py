@@ -84,8 +84,6 @@ def clean_df(df, type_dict):
 try:
     from streamlit_gsheets import GSheetsConnection
     conn = st.connection("gsheets", type=GSheetsConnection)
-    
-    # force_refresh 플래그가 켜져 있으면 캐시(ttl)를 0으로 만들어 시트에서 실시간 강제 로드
     ttl_value = 0 if st.session_state.force_refresh else 600
 
     def load_attendance_data():
@@ -103,7 +101,6 @@ try:
     def load_community_data():
         with st.spinner("⏳ 구글 시트에서 게시판 데이터를 불러오는 중..."):
             try:
-                # 데이터를 새로 가져올 때 ttl_value 상태를 실시간 반영하도록 보장
                 df_m = conn.read(spreadsheet=clean_url, worksheet="members", ttl=ttl_value)
                 df_c = conn.read(spreadsheet=clean_url, worksheet="categories", ttl=ttl_value)
                 df_p = conn.read(spreadsheet=clean_url, worksheet="posts", ttl=ttl_value)
@@ -232,11 +229,18 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 
                 st.info(f"**{f_s} 명단** : {', '.join(filtered['name'].values) if not filtered.empty else '없음'}")
                 
-                display_edit = filtered[["id","name","position","status","meal","reason"]].rename(columns={"name":"이름","position":"포지션","상태":"status","식사":"meal","사유":"reason"})
+                # 가독성과 구조 동기화를 위해 한글 필드명을 유지하며 데이터 추출
+                display_edit = filtered[["id","name","position","status","meal","reason"]].rename(columns={"name":"이름","position":"포지션","status":"상태","meal":"식사","reason":"사유"})
+                
+                # [오류 수선 핵심] 에디터의 고유 key를 날짜 단위로 고정하여 필터를 바꿀 때 입력 중인 상태가 유실되지 않도록 정비
                 edit_df = st.data_editor(
                     display_edit,
-                    column_config={"id":None, "상태":st.column_config.SelectboxColumn(options=["출석","지각","결석","미체크"])},
-                    key=f"ed_{date_key}_{f_s}", width="stretch"
+                    column_config={
+                        "id": None, 
+                        "상태": st.column_config.SelectboxColumn(options=["출석", "지각", "결석", "미체크"], required=True)
+                    },
+                    key=f"fixed_ed_key_{date_key}", 
+                    width="stretch"
                 )
                 
                 if st.button("💾 출석 저장", type="primary", width="stretch"):
@@ -244,15 +248,21 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                     patch["date"] = date_key
                     patch["id"] = patch["id"].astype(str).apply(clean_id_string)
                     
-                    old_db = st.session_state.attend_db
+                    old_db = st.session_state.attend_db.copy()
+                    old_db["id"] = old_db["id"].astype(str).apply(clean_id_string)
+                    
+                    # 수정한 인원들의 기존 행 정보 제거 후 새 데이터 병합
                     remain = old_db[~((old_db["date"]==date_key) & (old_db["id"].isin(patch["id"])))] if not old_db.empty else pd.DataFrame()
                     new_db = pd.concat([remain, patch[["date","id","status","reason","meal"]]], ignore_index=True)
                     
                     upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"])
                     conn.update(spreadsheet=clean_url, worksheet="attendance", data=upload_df)
+                    
+                    # 세션 내부 메모리도 최신 상태로 즉시 강제 갱신
+                    st.session_state.attend_db = upload_df
                     st.session_state.force_refresh = True
                     st.success("저장 완료!")
-                    time.sleep(1)
+                    time.sleep(0.5)
                     st.rerun()
 
         with tab_mem:
@@ -269,6 +279,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                             new_m = new_m.sort_values(by="name").reset_index(drop=True)
                             upload_df = pd.DataFrame(new_m, columns=["id","name","position"])
                             conn.update(spreadsheet=clean_url, worksheet="members", data=upload_df)
+                            st.session_state.members_db = new_m
                             st.session_state.force_refresh = True
                             st.rerun()
 
@@ -287,6 +298,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                             updated = updated.sort_values(by="name").reset_index(drop=True)
                             upload_df = pd.DataFrame(updated, columns=["id","name","position"])
                             conn.update(spreadsheet=clean_url, worksheet="members", data=upload_df)
+                            st.session_state.members_db = updated
                             st.session_state.force_refresh = True
                             st.rerun()
 
@@ -298,6 +310,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         updated = updated.sort_values(by="name").reset_index(drop=True)
                         upload_df = pd.DataFrame(updated, columns=["id","name","position"])
                         conn.update(spreadsheet=clean_url, worksheet="members", data=upload_df)
+                        st.session_state.members_db = updated
                         st.session_state.force_refresh = True
                         st.rerun()
 
@@ -338,6 +351,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         new_cat = pd.concat([cat_df, pd.DataFrame([{"id":str(int(time.time())), "name":str(new_cat_name.strip())}])], ignore_index=True)
                         upload_df = pd.DataFrame(new_cat, columns=["id", "name"]).astype(str)
                         conn.update(spreadsheet=clean_url, worksheet="categories", data=upload_df)
+                        st.session_state.cat_db = new_cat
                         st.session_state.force_refresh = True
                         st.rerun()
             with c2:
@@ -355,6 +369,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 updated_cat.loc[updated_cat["name"] == del_cat, "name"] = str(c_rename.strip())
                                 upload_df = pd.DataFrame(updated_cat, columns=["id", "name"]).astype(str)
                                 conn.update(spreadsheet=clean_url, worksheet="categories", data=upload_df)
+                                st.session_state.cat_db = updated_cat
                                 st.session_state.force_refresh = True
                                 st.rerun()
                     if col_btn2.button("카테고리 삭제", type="secondary"):
@@ -362,6 +377,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         updated_cat = cat_df[cat_df["id"] != tgt_id]
                         upload_df = pd.DataFrame(updated_cat, columns=["id", "name"]).astype(str)
                         conn.update(spreadsheet=clean_url, worksheet="categories", data=upload_df)
+                        st.session_state.cat_db = updated_cat
                         st.session_state.force_refresh = True
                         st.rerun()
 
@@ -401,12 +417,13 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 updated_p = pd.concat([st.session_state.post_db, new_p], ignore_index=True)
                                 upload_df = pd.DataFrame(updated_p, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                                 conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
+                                st.session_state.post_db = updated_p
                                 st.session_state.force_refresh = True
                                 st.success("🎉 등록되었습니다!")
                                 time.sleep(1)
                                 st.rerun()
 
-        # 7-3. 게시글 보기 및 댓글 관리 (실시간 동기화 버그 전면 해결)
+        # 7-3. 게시글 보기 및 댓글 관리
         with b_tab_view:
             sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
             p_db = st.session_state.post_db.copy()
@@ -438,7 +455,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     p_db.loc[p_db["id"] == post["id"], ["title", "content", "links"]] = [str(ed_title), str(ed_content), str(ed_links)]
                                     upload_df = pd.DataFrame(p_db, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
-                                    st.session_state.post_db = p_db # 로컬 세션 즉시 동기화
+                                    st.session_state.post_db = p_db
                                     st.session_state.force_refresh = True
                                     st.rerun()
                         else:
@@ -492,7 +509,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                             upload_df = pd.DataFrame(raw_comm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                             conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
                                             
-                                            # [핵심 수선] 화면 갱신 전에 로컬 세션 상태를 즉시 최신화하여 화면에 바로 반영 보장
                                             st.session_state.comm_db = raw_comm
                                             st.session_state[f"cedit_act_{cid_clean}"] = False
                                             st.session_state.force_refresh = True
@@ -520,8 +536,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                         upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                         
                                         conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
-                                        
-                                        # [핵심 수선] 지워진 즉시 세션 상태에서도 제거하여 옛날 데이터 표출 완벽 차단
                                         st.session_state.comm_db = updated_cm
                                         st.session_state.force_refresh = True
                                         st.success("댓글이 삭제되었습니다.")
@@ -563,7 +577,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
                                     
-                                    st.session_state.comm_db = updated_cm # 등록 즉시 데이터 반영
+                                    st.session_state.comm_db = updated_cm
                                     st.session_state.force_refresh = True
                                     st.success("댓글이 등록되었습니다!")
                                     time.sleep(0.4)
@@ -574,7 +588,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             updated_p = p_db[p_db["id"] != post["id"]]
                             upload_df = pd.DataFrame(updated_p, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                             conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
-                            st.session_state.post_db = updated_p # 즉시 동기화
+                            st.session_state.post_db = updated_p
                             st.session_state.force_refresh = True
                             st.success("게시글이 삭제되었습니다.")
                             time.sleep(1)
