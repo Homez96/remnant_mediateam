@@ -5,7 +5,7 @@ import time
 import requests
 
 # ── 0. 외부 스토리지(ImgBB 또는 Freeimage) 설정 ──────────────────────
-API_KEY = "6f1ec1ad61b9dc8ff1f25abda8fe4096"
+API_KEY = "여기에_발급받은_API_Key_입력"
 UPLOAD_URL = "https://api.imgbb.com/1/upload"
 
 def upload_image_to_storage(file_buffer):
@@ -58,7 +58,7 @@ if "att_loaded" not in st.session_state:
 if "board_loaded" not in st.session_state:
     st.session_state.board_loaded = False
 
-# ── 3. 구글 시트 데이터 로드 함수 ──────────────────────────────────
+# ── 3. 구글 시트 데이터 로드 및 정제 함수 ───────────────────────────
 clean_url = "https://docs.google.com/spreadsheets/d/1584S2jzLNFlSJHAgNOBo_w6HjwMwlJ7pUei4jVqeJrU"
 
 def clean_id_string(val):
@@ -216,7 +216,6 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.current_filter = "전체" if f_s == val else val
                         st.rerun()
                 
-                # [오류 해결 부분] 잘린 컴포넌트를 완전히 복구했습니다.
                 m_btn(cols[0], "출석", p_c, "b_p", "출석")
                 m_btn(cols[1], "지각", l_c, "b_l", "지각")
                 m_btn(cols[2], "결석", a_c, "b_a", "결석")
@@ -404,7 +403,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 time.sleep(1)
                                 st.rerun()
 
-        # 7-3. 게시글 보기 및 댓글 관리
+        # 7-3. 게시글 보기 및 댓글 관리 (수정/삭제 로직 대폭 강화)
         with b_tab_view:
             sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
             p_db = st.session_state.post_db.copy()
@@ -464,26 +463,68 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         current_post_id = str(post["id"])
                         
                         if not comm_db.empty:
-                            p_comms = comm_db[comm_db["post_id"] == current_post_id]
+                            # 데이터프레임 내 post_id 컬럼 전체를 확실히 정제 후 매칭
+                            comm_db["post_id"] = comm_db["post_id"].apply(clean_id_string)
+                            p_comms = comm_db[comm_db["post_id"] == clean_id_string(current_post_id)]
                         else:
                             p_comms = pd.DataFrame()
                         
                         if not p_comms.empty:
                             for _, citem in p_comms.iterrows():
-                                c_col1, c_col2 = st.columns([5, 1])
+                                cid_clean = clean_id_string(citem['id'])
+                                
+                                # 가로 정렬 레이아웃 구성
+                                c_col1, c_col2 = st.columns([4, 2])
                                 with c_col1:
                                     st.caption(f"**{citem['author']}** ({citem['created_at']})")
-                                    st.write(citem['content'])
+                                    
+                                    # [기능 추가] 댓글 개별 수정 모드 구현
+                                    c_edit_active = st.session_state.get(f"cedit_act_{cid_clean}", False)
+                                    if c_edit_active:
+                                        new_c_body = st.text_area("댓글 수정 내용", value=citem['content'], key=f"txt_cedit_{cid_clean}", height=70)
+                                        cs1, cs2 = st.columns(2)
+                                        if cs1.button("💾 완료", key=f"btn_csave_{cid_clean}", type="primary"):
+                                            # 세션 상태 디비 가공 및 업로드
+                                            raw_comm = st.session_state.comm_db.copy()
+                                            raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
+                                            raw_comm.loc[raw_comm["id"] == cid_clean, "content"] = str(new_c_body.strip())
+                                            
+                                            upload_df = pd.DataFrame(raw_comm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
+                                            conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
+                                            st.session_state[f"cedit_act_{cid_clean}"] = False
+                                            st.session_state.force_refresh = True
+                                            st.rerun()
+                                        if cs2.button("❌ 취소", key=f"btn_ccancel_{cid_clean}"):
+                                            st.session_state[f"cedit_act_{cid_clean}"] = False
+                                            st.rerun()
+                                    else:
+                                        st.write(citem['content'])
+                                
+                                # 우측 액션 버튼 존 (수정/삭제 아이콘 배치)
                                 with c_col2:
-                                    if st.button("🗑️", key=f"del_c_{citem['id']}"):
-                                        updated_cm = st.session_state.comm_db[st.session_state.comm_db["id"].apply(clean_id_string) != clean_id_string(citem['id'])]
+                                    st.write("") # 간격 맞춤용
+                                    act1, act2 = st.columns(2)
+                                    if act1.button("✏️", key=f"edit_c_{cid_clean}", help="댓글 수정"):
+                                        st.session_state[f"cedit_act_{cid_clean}"] = True
+                                        st.rerun()
+                                        
+                                    if act2.button("🗑️", key=f"del_c_{cid_clean}", help="댓글 삭제"):
+                                        # 원본 백업본에서 대상 ID를 확실하게 걸러낸 후 재업로드
+                                        raw_comm = st.session_state.comm_db.copy()
+                                        raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
+                                        
+                                        updated_cm = raw_comm[raw_comm["id"] != cid_clean]
                                         upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
+                                        
                                         conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
                                         st.session_state.force_refresh = True
+                                        st.success("댓글이 삭제되었습니다.")
+                                        time.sleep(0.5)
                                         st.rerun()
                         else:
                             st.caption("아직 작성된 댓글이 없습니다.")
                         
+                        # 새 댓글 작성 폼
                         with st.form(f"comm_{post['id']}", clear_on_submit=True):
                             st.markdown("**댓글 달기**")
                             member_names = ["선택하세요"] + list(st.session_state.members_db["name"].values) + ["[직접 입력]"]
@@ -503,19 +544,23 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 elif not c_txt.strip():
                                     st.error("❌ 댓글 내용을 입력해 주세요.")
                                 else:
+                                    # 고유 ID 생성 시점에 문자열 정제 적용
+                                    new_c_id = clean_id_string(str(int(time.time()*1000)))
                                     new_c = pd.DataFrame([{
-                                        "id": str(int(time.time()*1000)), 
-                                        "post_id": current_post_id, 
+                                        "id": new_c_id, 
+                                        "post_id": clean_id_string(current_post_id), 
                                         "author": str(final_author),
                                         "content": str(c_txt.strip()), 
                                         "created_at": datetime.now().strftime("%m-%d %H:%M")
                                     }])
-                                    updated_cm = pd.concat([st.session_state.comm_db, new_c], ignore_index=True)
+                                    
+                                    raw_comm = st.session_state.comm_db.copy()
+                                    updated_cm = pd.concat([raw_comm, new_c], ignore_index=True)
                                     upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
                                     st.session_state.force_refresh = True
                                     st.success("댓글이 등록되었습니다!")
-                                    time.sleep(1)
+                                    time.sleep(0.5)
                                     st.rerun()
                         
                         st.write("")
