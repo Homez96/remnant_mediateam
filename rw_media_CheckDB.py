@@ -10,7 +10,7 @@ API_KEY = "6f1ec1ad61b9dc8ff1f25abda8fe4096"
 
 # 💡 사용하실 서비스에 맞는 주소의 주석(#)을 해제하고 사용하세요. (기본값: ImgBB)
 UPLOAD_URL = "https://api.imgbb.com/1/upload"               # ImgBB 사용 시
-
+# UPLOAD_URL = "https://freeimage.host/api/1/upload"       # Freeimage 사용 시
 
 def upload_image_to_storage(file_buffer):
     """ImgBB 또는 Freeimage API를 이용해 이미지를 업로드하고 영구 URL을 반환하는 함수"""
@@ -19,7 +19,6 @@ def upload_image_to_storage(file_buffer):
         return None
         
     try:
-        # API에서 요구하는 파라미터 구조 세팅
         payload = {
             "key": API_KEY,
             "action": "upload"
@@ -32,7 +31,6 @@ def upload_image_to_storage(file_buffer):
         res_data = response.json()
         
         if response.status_code == 200:
-            # ImgBB와 Freeimage 모두 응답 데이터의 ['data']['url']에 영구 링크가 담깁니다.
             return res_data["data"]["url"]
         else:
             error_msg = res_data.get("error", {}).get("message", "알 수 없는 오류")
@@ -91,13 +89,15 @@ try:
         if df is None or df.empty: return pd.DataFrame(columns=type_dict.keys())
         for col, dtype in type_dict.items():
             if col in df.columns:
-                if dtype == "str": df[col] = df[col].astype(str).replace("nan", "")
+                if dtype == "str": df[col] = df[col].astype(str).replace("nan", "").replace("None", "")
                 elif dtype == "bool": df[col] = df[col].apply(lambda x: True if str(x).lower() in ['true','1','1.0'] else False)
         return df
 
     st.session_state.members_db = clean_df(df_m, {"id":"str", "name":"str", "position":"str"}).sort_values("name").reset_index(drop=True)
     st.session_state.attend_db = clean_df(df_a, {"date":"str", "id":"str", "status":"str", "meal":"bool", "reason":"str"})
     st.session_state.cat_db = clean_df(df_c, {"id":"str", "name":"str"})
+    
+    # ✨ 중요: posts 탭의 image_urls와 links가 빈 칸(NaN)이어도 무조건 문자로 깔끔하게 변환하도록 고정
     st.session_state.post_db = clean_df(df_p, {"id":"str", "category_id":"str", "title":"str", "content":"str", "links":"str", "image_urls":"str", "created_at":"str"})
     st.session_state.comm_db = clean_df(df_cm, {"id":"str", "post_id":"str", "author":"str", "content":"str", "created_at":"str"})
 
@@ -292,7 +292,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             p_id = str(int(time.time()))
                             c_id = cat_df[cat_df["name"]==p_cat]["id"].values[0]
                             
-                            # ✨ 새로운 외부 호스팅 서비스 연동 적용
                             uploaded_urls = []
                             for f in p_files:
                                 url_result = upload_image_to_storage(f)
@@ -304,8 +303,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 "category_id": c_id, 
                                 "title": p_title, 
                                 "content": p_content,
-                                "links": p_links, 
-                                "image_urls": ",".join(uploaded_urls),
+                                "links": p_links if p_links else "", 
+                                "image_urls": ",".join(uploaded_urls) if uploaded_urls else "",
                                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")
                             }])
                             
@@ -321,7 +320,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
         if cat_df.empty: st.info("생성된 카테고리가 없습니다.")
         else:
             sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
-            p_db = st.session_state.post_db
+            p_db = st.session_state.post_db.copy()
             
             if sel_cat_name != "전체 보기":
                 sel_c_id = cat_df[cat_df["name"]==sel_cat_name]["id"].values[0]
@@ -351,11 +350,12 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     else:
                         st.write(post['content'])
                         
-                        if post['image_urls'] and post['image_urls'].strip():
+                        # ✨ 빈 값 처리 방어벽 강화
+                        if isinstance(post['image_urls'], str) and post['image_urls'].strip():
                             for url in post['image_urls'].split(","):
                                 if url.strip(): st.image(url.strip(), use_container_width=True)
                                 
-                        if post['links'] and post['links'].strip():
+                        if isinstance(post['links'], str) and post['links'].strip():
                             for link in post['links'].split(","):
                                 if link.strip(): st.link_button(f"🔗 첨부 링크 연결", link.strip())
                     
