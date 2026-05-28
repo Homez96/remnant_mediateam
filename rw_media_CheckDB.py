@@ -5,7 +5,7 @@ import time
 import requests
 
 # ── 0. 외부 스토리지(ImgBB 또는 Freeimage) 설정 ──────────────────────
-API_KEY = "여기에_발급받은_API_Key_입력"
+API_KEY = "6f1ec1ad61b9dc8ff1f25abda8fe4096"
 UPLOAD_URL = "https://api.imgbb.com/1/upload"
 
 def upload_image_to_storage(file_buffer):
@@ -84,6 +84,8 @@ def clean_df(df, type_dict):
 try:
     from streamlit_gsheets import GSheetsConnection
     conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # force_refresh 플래그가 켜져 있으면 캐시(ttl)를 0으로 만들어 시트에서 실시간 강제 로드
     ttl_value = 0 if st.session_state.force_refresh else 600
 
     def load_attendance_data():
@@ -101,6 +103,7 @@ try:
     def load_community_data():
         with st.spinner("⏳ 구글 시트에서 게시판 데이터를 불러오는 중..."):
             try:
+                # 데이터를 새로 가져올 때 ttl_value 상태를 실시간 반영하도록 보장
                 df_m = conn.read(spreadsheet=clean_url, worksheet="members", ttl=ttl_value)
                 df_c = conn.read(spreadsheet=clean_url, worksheet="categories", ttl=ttl_value)
                 df_p = conn.read(spreadsheet=clean_url, worksheet="posts", ttl=ttl_value)
@@ -229,7 +232,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 
                 st.info(f"**{f_s} 명단** : {', '.join(filtered['name'].values) if not filtered.empty else '없음'}")
                 
-                display_edit = filtered[["id","name","position","status","meal","reason"]].rename(columns={"name":"이름","position":"포지션","status":"상태","meal":"식사","reason":"사유"})
+                display_edit = filtered[["id","name","position","status","meal","reason"]].rename(columns={"name":"이름","position":"포지션","상태":"status","식사":"meal","사유":"reason"})
                 edit_df = st.data_editor(
                     display_edit,
                     column_config={"id":None, "상태":st.column_config.SelectboxColumn(options=["출석","지각","결석","미체크"])},
@@ -403,7 +406,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 time.sleep(1)
                                 st.rerun()
 
-        # 7-3. 게시글 보기 및 댓글 관리 (수정/삭제 로직 대폭 강화)
+        # 7-3. 게시글 보기 및 댓글 관리 (실시간 동기화 버그 전면 해결)
         with b_tab_view:
             sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
             p_db = st.session_state.post_db.copy()
@@ -435,6 +438,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     p_db.loc[p_db["id"] == post["id"], ["title", "content", "links"]] = [str(ed_title), str(ed_content), str(ed_links)]
                                     upload_df = pd.DataFrame(p_db, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
+                                    st.session_state.post_db = p_db # 로컬 세션 즉시 동기화
                                     st.session_state.force_refresh = True
                                     st.rerun()
                         else:
@@ -463,7 +467,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         current_post_id = str(post["id"])
                         
                         if not comm_db.empty:
-                            # 데이터프레임 내 post_id 컬럼 전체를 확실히 정제 후 매칭
                             comm_db["post_id"] = comm_db["post_id"].apply(clean_id_string)
                             p_comms = comm_db[comm_db["post_id"] == clean_id_string(current_post_id)]
                         else:
@@ -473,26 +476,28 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             for _, citem in p_comms.iterrows():
                                 cid_clean = clean_id_string(citem['id'])
                                 
-                                # 가로 정렬 레이아웃 구성
                                 c_col1, c_col2 = st.columns([4, 2])
                                 with c_col1:
                                     st.caption(f"**{citem['author']}** ({citem['created_at']})")
                                     
-                                    # [기능 추가] 댓글 개별 수정 모드 구현
                                     c_edit_active = st.session_state.get(f"cedit_act_{cid_clean}", False)
                                     if c_edit_active:
                                         new_c_body = st.text_area("댓글 수정 내용", value=citem['content'], key=f"txt_cedit_{cid_clean}", height=70)
                                         cs1, cs2 = st.columns(2)
                                         if cs1.button("💾 완료", key=f"btn_csave_{cid_clean}", type="primary"):
-                                            # 세션 상태 디비 가공 및 업로드
                                             raw_comm = st.session_state.comm_db.copy()
                                             raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
                                             raw_comm.loc[raw_comm["id"] == cid_clean, "content"] = str(new_c_body.strip())
                                             
                                             upload_df = pd.DataFrame(raw_comm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                             conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
+                                            
+                                            # [핵심 수선] 화면 갱신 전에 로컬 세션 상태를 즉시 최신화하여 화면에 바로 반영 보장
+                                            st.session_state.comm_db = raw_comm
                                             st.session_state[f"cedit_act_{cid_clean}"] = False
                                             st.session_state.force_refresh = True
+                                            st.success("댓글이 수정되었습니다.")
+                                            time.sleep(0.4)
                                             st.rerun()
                                         if cs2.button("❌ 취소", key=f"btn_ccancel_{cid_clean}"):
                                             st.session_state[f"cedit_act_{cid_clean}"] = False
@@ -500,16 +505,14 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     else:
                                         st.write(citem['content'])
                                 
-                                # 우측 액션 버튼 존 (수정/삭제 아이콘 배치)
                                 with c_col2:
-                                    st.write("") # 간격 맞춤용
+                                    st.write("") 
                                     act1, act2 = st.columns(2)
                                     if act1.button("✏️", key=f"edit_c_{cid_clean}", help="댓글 수정"):
                                         st.session_state[f"cedit_act_{cid_clean}"] = True
                                         st.rerun()
                                         
                                     if act2.button("🗑️", key=f"del_c_{cid_clean}", help="댓글 삭제"):
-                                        # 원본 백업본에서 대상 ID를 확실하게 걸러낸 후 재업로드
                                         raw_comm = st.session_state.comm_db.copy()
                                         raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
                                         
@@ -517,14 +520,16 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                         upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                         
                                         conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
+                                        
+                                        # [핵심 수선] 지워진 즉시 세션 상태에서도 제거하여 옛날 데이터 표출 완벽 차단
+                                        st.session_state.comm_db = updated_cm
                                         st.session_state.force_refresh = True
                                         st.success("댓글이 삭제되었습니다.")
-                                        time.sleep(0.5)
+                                        time.sleep(0.4)
                                         st.rerun()
                         else:
                             st.caption("아직 작성된 댓글이 없습니다.")
                         
-                        # 새 댓글 작성 폼
                         with st.form(f"comm_{post['id']}", clear_on_submit=True):
                             st.markdown("**댓글 달기**")
                             member_names = ["선택하세요"] + list(st.session_state.members_db["name"].values) + ["[직접 입력]"]
@@ -544,7 +549,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 elif not c_txt.strip():
                                     st.error("❌ 댓글 내용을 입력해 주세요.")
                                 else:
-                                    # 고유 ID 생성 시점에 문자열 정제 적용
                                     new_c_id = clean_id_string(str(int(time.time()*1000)))
                                     new_c = pd.DataFrame([{
                                         "id": new_c_id, 
@@ -558,9 +562,11 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     updated_cm = pd.concat([raw_comm, new_c], ignore_index=True)
                                     upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
+                                    
+                                    st.session_state.comm_db = updated_cm # 등록 즉시 데이터 반영
                                     st.session_state.force_refresh = True
                                     st.success("댓글이 등록되었습니다!")
-                                    time.sleep(0.5)
+                                    time.sleep(0.4)
                                     st.rerun()
                         
                         st.write("")
@@ -568,6 +574,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             updated_p = p_db[p_db["id"] != post["id"]]
                             upload_df = pd.DataFrame(updated_p, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                             conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
+                            st.session_state.post_db = updated_p # 즉시 동기화
                             st.session_state.force_refresh = True
                             st.success("게시글이 삭제되었습니다.")
                             time.sleep(1)
