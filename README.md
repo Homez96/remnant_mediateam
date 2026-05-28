@@ -1,6 +1,7 @@
 # remnant_mediateam
 
 #커뮤니티 게시판 UI 수정
+
 #카테고리 왼쪽에 노출
 
 
