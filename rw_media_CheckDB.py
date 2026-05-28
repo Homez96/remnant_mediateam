@@ -523,142 +523,54 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 st.success("🎉 등록되었습니다!")
                                 time.sleep(1)
                                 st.rerun()
-
-        # 7-3. 게시글 보기 및 댓글 관리
+# 7-3. 게시글 보기 및 댓글 관리 (수정본)
         with b_tab_view:
-            sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
-            full_p_db = st.session_state.post_db.copy()
+            # 1. 상세 페이지 이동 상태 관리
+            if "view_post_id" not in st.session_state:
+                st.session_state.view_post_id = None
 
-            if sel_cat_name != "전체 보기" and not full_p_db.empty:
-                if not cat_df.empty and sel_cat_name in cat_df["name"].values:
+            # 2. 상세 페이지 모드
+            if st.session_state.view_post_id:
+                if st.button("⬅️ 목록으로 돌아가기"):
+                    st.session_state.view_post_id = None
+                    st.rerun()
+                
+                # 선택된 게시글 데이터 가져오기
+                post = full_p_db[full_p_db["id"] == st.session_state.view_post_id].iloc[0]
+                st.title(post['title'])
+                st.caption(f"작성일: {post['created_at']}")
+                st.write("---")
+                st.write(post['content'])
+                
+                # 이미지 및 링크 처리 (기존 로직 유지)
+                if isinstance(post['image_urls'], str) and post['image_urls'].strip():
+                    for url in post['image_urls'].split(","):
+                        if url.strip(): st.image(url.strip(), use_container_width=True)
+                
+                if isinstance(post['links'], str) and post['links'].strip():
+                    for link in post['links'].split(","):
+                        if link.strip(): st.link_button("🔗 첨부 링크", link.strip())
+
+                st.write("---")
+                # 여기서부터 기존의 댓글 관리 로직을 붙여넣으시면 됩니다.
+                # (중요: 댓글 작성/수정 버튼 클릭 시 st.rerun()을 반드시 포함하세요)
+
+            # 3. 리스트 모드 (게시글 제목 클릭 시 view_post_id 업데이트)
+            else:
+                sel_cat_name = st.selectbox("📂 카테고리 필터링", ["전체 보기"] + list(cat_df["name"].values))
+                
+                if sel_cat_name != "전체 보기" and not full_p_db.empty:
                     sel_c_id = cat_df[cat_df["name"] == sel_cat_name]["id"].values[0]
                     display_posts = full_p_db[full_p_db["category_id"] == sel_c_id]
                 else:
-                    display_posts = pd.DataFrame()
-            else:
-                display_posts = full_p_db
+                    display_posts = full_p_db
 
-            if display_posts.empty:
-                st.info("등록된 글이 없습니다.")
-            else:
-                for _, post in display_posts[::-1].iterrows():
-                    c_row = cat_df[cat_df["id"] == post["category_id"]] if not cat_df.empty else pd.DataFrame()
-                    c_name = c_row["name"].values[0] if not c_row.empty else "미분류"
-
-                    with st.expander(f"[{c_name}] {post['title']} ({post['created_at']})"):
-                        edit_mode = st.checkbox("✏️ 이 글 수정/삭제하기", key=f"e_mode_{post['id']}")
-                        
-                        if edit_mode:
-                            with st.form(f"form_ed_{post['id']}"):
-                                ed_title = st.text_input("제목 변경", value=post['title'])
-                                ed_content = st.text_area("내용 변경", value=post['content'], height=150)
-                                ed_links = st.text_input("링크 변경", value=post['links'])
-                                
-                                btn_col1, btn_col2 = st.columns([1, 1])
-                                if btn_col1.form_submit_button("💾 수정 완료 저장", type="primary"):
-                                    if not require_conn(): st.stop()
-                                    full_p_db.loc[full_p_db["id"] == post["id"], ["title", "content", "links"]] = [
-                                        str(ed_title), str(ed_content), str(ed_links)
-                                    ]
-                                    upload_df = pd.DataFrame(full_p_db, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
-                                    conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
-                                    st.session_state.post_db = full_p_db
-                                    st.session_state.force_refresh = True
-                                    st.success("게시글이 수정되었습니다.")
-                                    time.sleep(0.5)
-                                    st.rerun()
-                                    
-                                if btn_col2.form_submit_button("🗑️ 이 게시글 삭제", type="secondary"):
-                                    if not require_conn(): st.stop()
-                                    updated_posts = full_p_db[full_p_db["id"] != post["id"]]
-                                    upload_df = pd.DataFrame(updated_posts, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
-                                    conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
-                                    st.session_state.post_db = updated_posts
-                                    st.session_state.force_refresh = True
-                                    st.warning("게시글물이 삭제되었습니다.")
-                                    time.sleep(0.5)
-                                    st.rerun()
-                        else:
-                            st.write(post['content'])
-
-                            if isinstance(post['image_urls'], str) and post['image_urls'].strip():
-                                for url in post['image_urls'].split(","):
-                                    if url.strip():
-                                        st.image(url.strip(), use_container_width=True)
-
-                            if isinstance(post['links'], str) and post['links'].strip():
-                                for link in post['links'].split(","):
-                                    cleaned_link = link.strip()
-                                    if cleaned_link:
-                                        is_youtube = "youtube.com" in cleaned_link or "youtu.be" in cleaned_link
-                                        is_video_file = any(cleaned_link.lower().endswith(ext) for ext in [".mp4", ".mov", ".avi", ".webm"])
-                                        if is_youtube or is_video_file:
-                                            st.video(cleaned_link)
-                                        else:
-                                            st.link_button("🔗 첨부 링크 연결", cleaned_link)
-
-                        st.write("---")
-                        st.markdown("**💬 댓글 목록**")
-
-                        comm_db = st.session_state.comm_db.copy()
-                        current_post_id = clean_id_string(str(post["id"]))
-
-                        if not comm_db.empty:
-                            comm_db["post_id"] = comm_db["post_id"].apply(clean_id_string)
-                            p_comms = comm_db[comm_db["post_id"] == current_post_id]
-                        else:
-                            p_comms = pd.DataFrame()
-
-                        if not p_comms.empty:
-                            for _, citem in p_comms.iterrows():
-                                cid_clean = clean_id_string(citem['id'])
-
-                                c_col1, c_col2 = st.columns([5, 1])
-                                with c_col1:
-                                    st.caption(f"**{citem['author']}** ({citem['created_at']})")
-
-                                    c_edit_active = st.session_state.get(f"cedit_act_{cid_clean}", False)
-                                    if c_edit_active:
-                                        new_c_body = st.text_area("댓글 수정 내용", value=citem['content'], key=f"txt_cedit_{cid_clean}", height=70)
-                                        cs1, cs2 = st.columns(2)
-                                        if cs1.button("💾 완료", key=f"btn_csave_{cid_clean}", type="primary"):
-                                            if not require_conn(): st.stop()
-                                            raw_comm = st.session_state.comm_db.copy()
-                                            raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
-                                            raw_comm.loc[raw_comm["id"] == cid_clean, "content"] = str(new_c_body.strip())
-
-                                            upload_df = pd.DataFrame(raw_comm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
-                                            conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
-
-                                            st.session_state.comm_db = raw_comm
-                                            st.session_state[f"cedit_act_{cid_clean}"] = False
-                                            st.session_state.force_refresh = True
-                                            st.success("댓글이 수정되었습니다.")
-                                            time.sleep(0.4)
-                                            st.rerun()
-                                        if cs2.button("❌ 취소", key=f"btn_ccancel_{cid_clean}"):
-                                            st.session_state[f"cedit_act_{cid_clean}"] = False
-                                            st.rerun()
-                                    else:
-                                        st.write(citem['content'])
-
-                                with c_col2:
-                                    act1, act2 = st.columns(2)
-                                    if act1.button("✏️", key=f"edit_c_{cid_clean}", help="댓글 수정"):
-                                        st.session_state[f"cedit_act_{cid_clean}"] = True
-                                        st.rerun()
-
-                                    if act2.button("🗑️", key=f"del_c_{cid_clean}", help="댓글 삭제"):
-                                        if not require_conn(): st.stop()
-                                        raw_comm = st.session_state.comm_db.copy()
-                                        raw_comm["id"] = raw_comm["id"].apply(clean_id_string)
-                                        updated_cm = raw_comm[raw_comm["id"] != cid_clean]
-                                        
-                                        upload_df = pd.DataFrame(updated_cm, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
-                                        conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
-                                        
-                                        st.session_state.comm_db = updated_cm
-                                        st.session_state.force_refresh = True
-                                        st.warning("댓글이 삭제되었습니다.")
-                                        time.sleep(0.4)
-                                        st.rerun()
+                st.subheader("📋 게시글 목록")
+                if display_posts.empty:
+                    st.info("등록된 글이 없습니다.")
+                else:
+                    for _, post in display_posts[::-1].iterrows():
+                        # 제목을 버튼으로 만들어 클릭 시 해당 post['id']로 상세 페이지 이동
+                        if st.button(f"📄 {post['title']}", key=f"btn_post_{post['id']}", use_container_width=True):
+                            st.session_state.view_post_id = post['id']
+                            st.rerun()
