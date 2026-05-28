@@ -209,6 +209,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
             if m_df.empty:
                 st.info("등록된 예배자가 없습니다. 예배자를 등록하거나 다시 불러와보세요.")
             else:
+                # members 정보와 해당 날짜(date_key)의 attendance 데이터 매핑
                 curr_a = a_df[a_df["date"] == date_key] if not a_df.empty else pd.DataFrame()
                 if not curr_a.empty:
                     merged = pd.merge(m_df, curr_a, on="id", how="left")
@@ -222,6 +223,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 merged["meal"] = merged["meal"].fillna(False)
                 merged["reason"] = merged["reason"].fillna("")
 
+                # 💡 실시간 상단 인원 통계 계산
                 p_c = (merged["status"] == "출석").sum()
                 l_c = (merged["status"] == "지각").sum()
                 a_c = (merged["status"] == "결석").sum()
@@ -243,54 +245,104 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                 m_btn(cols[3], "식사", int(m_c), "b_m", "식사")
                 m_btn(cols[4], "미체크", u_c, "b_u", "미체크")
 
+                # 상단 토글 활성화 시 명단만 노출
                 f_s = st.session_state.current_filter
                 if f_s == "식사":
-                    filtered_ids = merged[merged["meal"] == True]["id"].values
+                    filtered_names = merged[merged["meal"] == True]["name"].values
                 elif f_s != "전체":
-                    filtered_ids = merged[merged["status"] == f_s]["id"].values
+                    filtered_names = merged[merged["status"] == f_s]["name"].values
                 else:
-                    filtered_ids = merged["id"].values
+                    filtered_names = merged["name"].values
 
-                filtered = merged[merged["id"].isin(filtered_ids)]
-                st.info(f"**{f_s} 명단** : {', '.join(filtered['name'].values) if not filtered.empty else '없음'}")
+                st.info(f"**{f_s} 명단 요약** : {', '.join(filtered_names) if len(filtered_names) > 0 else '없음'}")
 
-                display_edit = merged[["id", "name", "position", "status", "meal", "reason"]].rename(
-                    columns={"name": "이름", "position": "포지션", "status": "상태", "meal": "식사", "reason": "사유"}
-                )
+                st.write("---")
+                st.subheader("✍️ 개별 출석 기록 폼")
 
-                edit_df = st.data_editor(
-                    display_edit,
-                    column_config={
-                        "id": None,
-                        "상태": st.column_config.SelectboxColumn(options=["출석", "지각", "결석", "미체크"], required=True),
-                    },
-                    key=f"editor_{date_key}",
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                # ──────────────────────────────────────────────────────────────────
+                # 🛠️ [리팩토링 핵심] 순차 선택형 및 포지션 변경 유연화 UI 구현 시작
+                # ──────────────────────────────────────────────────────────────────
+                member_names_list = merged["name"].tolist()
 
-                if st.button("💾 출석 저장", type="primary", use_container_width=True):
-                    if not require_conn():
-                        st.stop()
+                with st.form(key=f"individual_attendance_form_{date_key}", clear_on_submit=False):
+                    
+                    # ① 이름 선택 드롭다운
+                    chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
+                    
+                    # 선택된 사용자의 기존 데이터 로우 추출
+                    user_current_row = merged[merged["name"] == chosen_name].iloc[0]
+                    
+                    # ② 포지션 선택 드롭다운 (기존 포지션이 기본 선택되지만 자유롭게 변경 가능)
+                    # members 시트에 저장되어 있는 기본 포지션을 가져옴
+                    base_position = str(user_current_row["position"]).strip()
+                    if base_position in POSITIONS:
+                        pos_default_idx = POSITIONS.index(base_position)
+                    else:
+                        pos_default_idx = 0
+                    
+                    chosen_position = st.selectbox("🎥 2. 오늘 담당 포지션 선택", POSITIONS, index=pos_default_idx)
+                    
+                    # ③ 출석 상태 선택 드롭다운
+                    STATUS_OPTIONS = ["출석", "지각", "결석", "미체크"]
+                    base_status = str(user_current_row["status"]).strip()
+                    status_default_idx = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
+                    
+                    chosen_status = st.selectbox("📊 3. 출석 상태 변경", STATUS_OPTIONS, index=status_default_idx)
+                    
+                    # ④ 사유 입력 칸
+                    base_reason = str(user_current_row["reason"]).strip()
+                    chosen_reason = st.text_input("📝 4. 특이사항 / 사유 입력", value=base_reason, placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.")
+                    
+                    # ⑤ 식사 신청 여부 체크박스
+                    base_meal_bool = bool(user_current_row["meal"])
+                    chosen_meal = st.checkbox("🍴 5. 오늘 식사 신청 여부", value=base_meal_bool)
+                    
+                    st.write("")
+                    save_submit_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
 
-                    patch = edit_df.rename(columns={"이름": "name", "포지션": "position", "상태": "status", "식사": "meal", "사유": "reason"})
-                    patch["date"] = date_key
-                    patch["id"] = patch["id"].astype(str).apply(clean_id_string)
+                    if save_submit_btn:
+                        if not require_conn():
+                            st.stop()
+                        
+                        target_id = user_current_row["id"]
 
-                    old_db = st.session_state.attend_db.copy()
-                    old_db["id"] = old_db["id"].astype(str).apply(clean_id_string)
+                        # ── [동기화 작업 1] 구글 members 시트의 포지션 정보 실시간 수정 ──
+                        # 선택된 포지션이 기존 배치와 다르다면 members 기본 정보도 실시간 업데이트해 줍니다.
+                        raw_members = st.session_state.members_db.copy()
+                        raw_members["id"] = raw_members["id"].astype(str).apply(clean_id_string)
+                        
+                        m_idx = raw_members[raw_members["id"] == target_id].index[0]
+                        raw_members.at[m_idx, "position"] = chosen_position
+                        
+                        upload_members_df = pd.DataFrame(raw_members, columns=["id", "name", "position"]).astype(str)
+                        conn.update(spreadsheet=clean_url, worksheet="members", data=upload_members_df)
+                        st.session_state.members_db = raw_members
 
-                    remain = old_db[old_db["date"] != date_key] if not old_db.empty else pd.DataFrame()
-                    new_db = pd.concat([remain, patch[["date", "id", "status", "reason", "meal"]]], ignore_index=True)
-
-                    upload_df = pd.DataFrame(new_db, columns=["date", "id", "status", "reason", "meal"])
-                    conn.update(spreadsheet=clean_url, worksheet="attendance", data=upload_df)
-
-                    st.session_state.attend_db = upload_df
-                    st.session_state.force_refresh = True
-                    st.success("✅ 저장 완료!")
-                    time.sleep(0.5)
-                    st.rerun()
+                        # ── [동기화 작업 2] 구글 attendance 시트 기록 생성 및 수정 ──
+                        old_db = st.session_state.attend_db.copy()
+                        old_db["id"] = old_db["id"].astype(str).apply(clean_id_string)
+                        
+                        # 오늘 날짜에 해당 팀원의 기존 데이터 행이 있으면 지우고 새로운 값으로 대체 병합
+                        remain = old_db[(old_db["date"] != date_key) | (old_db["id"] != target_id)] if not old_db.empty else pd.DataFrame()
+                        
+                        new_record = pd.DataFrame([{
+                            "date": date_key,
+                            "id": target_id,
+                            "status": chosen_status,
+                            "reason": chosen_reason.strip(),
+                            "meal": chosen_meal
+                        }])
+                        
+                        new_db = pd.concat([remain, new_record], ignore_index=True)
+                        upload_attend_df = pd.DataFrame(new_db, columns=["date", "id", "status", "reason", "meal"])
+                        conn.update(spreadsheet=clean_url, worksheet="attendance", data=upload_attend_df)
+                        
+                        st.session_state.attend_db = upload_attend_df
+                        st.session_state.force_refresh = True
+                        
+                        st.success(f"🎉 {chosen_name} 님의 정보(포지션: {chosen_position} / 상태: {chosen_status})가 구글 시트에 안전하게 저장되었습니다!")
+                        time.sleep(0.6)
+                        st.rerun()
 
         with tab_mem:
             st.dataframe(st.session_state.members_db[["name", "position"]], use_container_width=True, hide_index=True)
@@ -513,7 +565,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     
                                 if btn_col2.form_submit_button("🗑️ 이 게시글 삭제", type="secondary"):
                                     if not require_conn(): st.stop()
-                                    # 게시글 삭제 로직
                                     updated_posts = full_p_db[full_p_db["id"] != post["id"]]
                                     upload_df = pd.DataFrame(updated_posts, columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]).astype(str)
                                     conn.update(spreadsheet=clean_url, worksheet="posts", data=upload_df)
@@ -553,7 +604,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         else:
                             p_comms = pd.DataFrame()
 
-                        # 댓글 표시 및 개별 관리
                         if not p_comms.empty:
                             for _, citem in p_comms.iterrows():
                                 cid_clean = clean_id_string(citem['id'])
@@ -604,41 +654,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                         
                                         st.session_state.comm_db = updated_cm
                                         st.session_state.force_refresh = True
-                                        st.success("댓글이 삭제되었습니다.")
+                                        st.warning("댓글이 삭제되었습니다.")
                                         time.sleep(0.4)
                                         st.rerun()
-                        else:
-                            st.caption("첫 댓글을 남겨보세요!")
-
-                        # ── 새로운 댓글 작성 컴포넌트 추가 ────────────────────────
-                        st.write("")
-                        with st.form(key=f"add_comment_form_{current_post_id}", clear_on_submit=True):
-                            cc1, cc2 = st.columns([1, 3])
-                            with cc1:
-                                c_author = st.text_input("작성자", max_chars=10, placeholder="이름", key=f"c_auth_{current_post_id}")
-                            with cc2:
-                                c_content = st.text_input("댓글 추가", placeholder="따뜻한 한마디를 남겨주세요...", key=f"c_cont_{current_post_id}")
-                            
-                            if st.form_submit_button("댓글 등록", use_container_width=True):
-                                if not require_conn(): st.stop()
-                                if not c_author.strip() or not c_content.strip():
-                                    st.error("작성자와 댓글 내용을 모두 입력해 주세요.")
-                                else:
-                                    new_c_id = str(int(time.time() * 1000))
-                                    new_comment_row = pd.DataFrame([{
-                                        "id": new_c_id,
-                                        "post_id": current_post_id,
-                                        "author": c_author.strip(),
-                                        "content": c_content.strip(),
-                                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-                                    }])
-                                    
-                                    updated_comm_db = pd.concat([st.session_state.comm_db, new_comment_row], ignore_index=True)
-                                    upload_df = pd.DataFrame(updated_comm_db, columns=["id", "post_id", "author", "content", "created_at"]).astype(str)
-                                    conn.update(spreadsheet=clean_url, worksheet="comments", data=upload_df)
-                                    
-                                    st.session_state.comm_db = updated_comm_db
-                                    st.session_state.force_refresh = True
-                                    st.success("댓글이 등록되었습니다.")
-                                    time.sleep(0.4)
-                                    st.rerun()
