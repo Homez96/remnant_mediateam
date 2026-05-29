@@ -590,58 +590,51 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
         st.markdown("---")
 
-        # 자체 이름 목록 관리 (구글 시트 독립적)
-        if "pos_name_list" not in st.session_state:
-            st.session_state.pos_name_list = []
-
-        with st.expander("👥 이름 목록 관리 (추가/삭제)", expanded=len(st.session_state.pos_name_list) == 0):
-            with st.form("name_list_form", clear_on_submit=True):
-                new_name_input = st.text_input("새 이름 추가", placeholder="팀원 이름 입력 후 추가")
-                if st.form_submit_button("➕ 이름 추가"):
-                    n = new_name_input.strip()
-                    if not n:
-                        st.error("이름을 입력해 주세요.")
-                    elif n in st.session_state.pos_name_list:
-                        st.warning(f"'{n}'은 이미 목록에 있습니다.")
-                    else:
-                        st.session_state.pos_name_list.append(n)
-                        st.rerun()
-
-            if st.session_state.pos_name_list:
-                st.markdown("**현재 이름 목록:**")
-                nl_cols = st.columns(4)
-                for ni, nm in enumerate(st.session_state.pos_name_list):
-                    with nl_cols[ni % 4]:
-                        if st.button(f"❌ {nm}", key=f"del_name_{ni}", help="목록에서 제거"):
-                            st.session_state.pos_name_list.pop(ni)
-                            st.rerun()
+        # 구글 시트 멤버 목록 불러오기
+        if not st.session_state.att_loaded:
+            load_col, _ = st.columns([2, 3])
+            if load_col.button("🔄 멤버 명단 불러오기", type="primary", use_container_width=True):
+                load_attendance_data()
+                st.rerun()
+            st.info("👆 구글 시트에서 멤버 명단을 불러온 뒤 배정할 수 있습니다.")
+        else:
+            member_names_pos = list(st.session_state.members_db["name"].values)
+            rc, _ = st.columns([3, 2])
+            if rc.button("🔄 명단 새로고침", key="pos_reload_members"):
+                load_attendance_data()
+                st.rerun()
 
         st.markdown("#### 👤 팀원 포지션 배정")
 
-        name_opts = ["선택하세요"] + st.session_state.pos_name_list if st.session_state.pos_name_list else None
+        # 멤버 목록 구성
+        if st.session_state.att_loaded and not st.session_state.members_db.empty:
+            member_names_pos = list(st.session_state.members_db["name"].values)
+            name_opts = ["선택하세요"] + member_names_pos
+        else:
+            name_opts = None
 
         with st.form("pos_add_form", clear_on_submit=True):
             pa_col1, pa_col2 = st.columns(2)
             if name_opts:
                 chosen_name_pa = pa_col1.selectbox("이름 선택", name_opts, key="pa_name_sel")
-                direct_name_pa = ""
             else:
-                chosen_name_pa = ""
-                direct_name_pa = pa_col1.text_input("이름 직접 입력", placeholder="위 목록에 이름을 먼저 추가하거나 여기 입력", key="pa_name_direct")
+                chosen_name_pa = "선택하세요"
+                pa_col1.info("명단을 먼저 불러오세요")
 
             chosen_pos_pa = pa_col2.selectbox("포지션 선택", POSITIONS, key="pa_pos_sel")
 
             if st.form_submit_button("➕ 배정 추가", type="primary", use_container_width=True):
-                final_name = (chosen_name_pa if name_opts else direct_name_pa.strip())
-                if not final_name or final_name == "선택하세요":
-                    st.error("❌ 이름을 선택하거나 입력해 주세요.")
+                if not name_opts:
+                    st.error("❌ 먼저 멤버 명단을 불러오세요.")
+                elif chosen_name_pa == "선택하세요":
+                    st.error("❌ 이름을 선택해 주세요.")
                 elif chosen_pos_pa == "선택 안 함":
                     st.error("❌ 포지션을 선택해 주세요.")
                 else:
-                    existing = [a for a in st.session_state.pos_assignments if a["name"] != final_name]
-                    existing.append({"name": final_name, "position": chosen_pos_pa})
+                    existing = [a for a in st.session_state.pos_assignments if a["name"] != chosen_name_pa]
+                    existing.append({"name": chosen_name_pa, "position": chosen_pos_pa})
                     st.session_state.pos_assignments = existing
-                    st.success(f"✅ {final_name} → {chosen_pos_pa} 배정 완료!")
+                    st.success(f"✅ {chosen_name_pa} → {chosen_pos_pa} 배정 완료!")
                     st.rerun()
 
         # 현재 배정 목록
