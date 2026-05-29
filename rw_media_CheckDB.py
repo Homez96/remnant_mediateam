@@ -54,12 +54,17 @@ _defaults = {
     "sel_sub_cat_id":    None,   # None = 채널 전체, str = 선택된 폴더 id
     "show_add_ch":       False,  # 채널 추가 입력란 표시 여부
     "show_add_sc":       False,  # 폴더(세부 카테고리) 추가 입력란 표시 여부
+    # ── 포지션 배치 관리 ──────────────────────────────────
+    "pos_map_images":    [],        # [{"id":str, "url":str, "label":str, "icons":[...]}]
+    "pos_assign_date":   date.today(),
+    "pos_assignments":   [],        # [{"name":str, "position":str}]
+    "pos_img_edit_id":   None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-MENU_OPTIONS = ["🏠 홈 (대시보드)", "⛪ 예배 출석 관리", "🏛️ 팀 커뮤니티 게시판"]
+MENU_OPTIONS = ["🏠 홈 (대시보드)", "⛪ 예배 출석 관리", "🎬 포지션 배치 관리", "🏛️ 팀 커뮤니티 게시판"]
 POSITIONS    = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라",
                 "PD", "TD", "노출", "자막", "LED", "조명", "사진 촬영", "릴스", "FD", "음향"]
 
@@ -172,7 +177,7 @@ if st.session_state.page == "🏠 홈 (대시보드)":
     st.subheader("👋 반갑습니다!")
     st.info("원하시는 작업을 선택한 후 이동하여 데이터를 불러와 주세요!")
     st.write("")
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("### 📋 출석부 기록/수정")
         st.write("미디어팀원들의 예배 출석 상태 및 포지션 배정, 식사 여부를 관리합니다.")
@@ -180,6 +185,12 @@ if st.session_state.page == "🏠 홈 (대시보드)":
             st.session_state.page = "⛪ 예배 출석 관리"
             st.rerun()
     with c2:
+        st.markdown("### 🎬 포지션 배치 관리")
+        st.write("배치도 이미지를 관리하고 날짜별 팀원 포지션 배치 명단을 생성·공유합니다.")
+        if st.button("🚀 포지션 배치 관리 바로가기", use_container_width=True, type="primary"):
+            st.session_state.page = "🎬 포지션 배치 관리"
+            st.rerun()
+    with c3:
         st.markdown("### 🏛️ 팀 커뮤니티 게시판")
         st.write("공지사항 공유, 카테고리별 게시글 작성 및 댓글 소통 공간입니다.")
         if st.button("🚀 팀 커뮤니티 게시판 바로가기", use_container_width=True, type="primary"):
@@ -385,6 +396,341 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 #    - 인채널(메인): 노션 페이지 스타일 폴더(세부 카테고리) UI
 #      → 폴더 추가/삭제는 모두 인채널 영역에서
 # ══════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════
+# 7. 포지션 배치 관리
+# ══════════════════════════════════════════════════════════════════════
+elif st.session_state.page == "🎬 포지션 배치 관리":
+    st.header("🎬 포지션 배치 관리")
+
+    # 출석 데이터가 없으면 불러오기 (멤버 목록 필요)
+    if not st.session_state.att_loaded:
+        st.warning("⚠️ 멤버 목록이 필요합니다. 출석 데이터를 먼저 불러오세요.")
+        if st.button("🔄 데이터 불러오기", type="primary"):
+            load_attendance_data()
+            st.rerun()
+
+    tab_img, tab_assign, tab_roster = st.tabs(["🖼️ 배치도 이미지 관리", "📝 날짜·포지션 배정", "📋 명단 확인 & 복사"])
+
+    # ── 탭1: 배치도 이미지 관리 ──────────────────────────────────────
+    with tab_img:
+        st.subheader("🖼️ 배치도 이미지 관리")
+        st.caption("배치도 이미지를 업로드하고, 이미지 위 각 포지션 아이콘 좌표를 설정하면 클릭 시 안내 문구가 표시됩니다.")
+
+        # 이미지 업로드
+        with st.expander("➕ 새 배치도 이미지 추가", expanded=len(st.session_state.pos_map_images) == 0):
+            up_label = st.text_input("배치도 이름 (예: 1부 예배 배치도)", key="pos_img_label_input")
+            up_file  = st.file_uploader("이미지 파일 선택", type=["png", "jpg", "jpeg", "webp"], key="pos_img_upload")
+            if st.button("☁️ 업로드 & 저장", type="primary", key="pos_img_upload_btn"):
+                if not up_file:
+                    st.error("❌ 이미지 파일을 선택해 주세요.")
+                elif not up_label.strip():
+                    st.error("❌ 배치도 이름을 입력해 주세요.")
+                else:
+                    with st.spinner("업로드 중..."):
+                        url = upload_image_to_storage(up_file)
+                    if url:
+                        new_img = {
+                            "id":    str(int(time.time() * 1000)),
+                            "url":   url,
+                            "label": up_label.strip(),
+                            "icons": [],
+                        }
+                        st.session_state.pos_map_images.append(new_img)
+                        st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다!")
+                        st.rerun()
+                    else:
+                        # ImgBB 없으면 base64로 메모리 저장
+                        import base64
+                        b64 = base64.b64encode(up_file.getvalue()).decode()
+                        ext = up_file.name.rsplit(".", 1)[-1].lower()
+                        data_url = f"data:image/{ext};base64,{b64}"
+                        new_img = {
+                            "id":    str(int(time.time() * 1000)),
+                            "url":   data_url,
+                            "label": up_label.strip(),
+                            "icons": [],
+                        }
+                        st.session_state.pos_map_images.append(new_img)
+                        st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다! (로컬 저장)")
+                        st.rerun()
+
+        # 이미지 목록 표시
+        if not st.session_state.pos_map_images:
+            st.info("📭 등록된 배치도 이미지가 없습니다. 위에서 추가해 주세요.")
+        else:
+            for img_item in st.session_state.pos_map_images:
+                img_id    = img_item["id"]
+                img_label = img_item["label"]
+                img_url   = img_item["url"]
+                img_icons = img_item.get("icons", [])
+
+                with st.container(border=True):
+                    col_title, col_del = st.columns([6, 1])
+                    with col_title:
+                        st.markdown(f"#### 🗺️ {img_label}")
+                    with col_del:
+                        if st.button("🗑️", key=f"del_img_{img_id}", help="이미지 삭제"):
+                            st.session_state.pos_map_images = [
+                                x for x in st.session_state.pos_map_images if x["id"] != img_id
+                            ]
+                            if st.session_state.pos_img_edit_id == img_id:
+                                st.session_state.pos_img_edit_id = None
+                            st.rerun()
+
+                    # 이미지 표시 + 아이콘 클릭 안내 (HTML)
+                    # 아이콘들을 이미지 위에 오버레이로 표시
+                    icons_html = ""
+                    for ic in img_icons:
+                        pos_label = ic.get("label") or ic.get("pos", "")
+                        guide     = ic.get("guide", "포지션 안내 문구 없음")
+                        icons_html += f"""
+                        <div class="pos-icon" style="left:{ic['x']}%;top:{ic['y']}%;"
+                             onclick="toggleGuide(this)"
+                             data-guide="{pos_label}: {guide}">
+                            <span class="icon-dot">📍</span>
+                            <span class="icon-label">{pos_label}</span>
+                            <div class="guide-bubble">{pos_label}<br>{guide}</div>
+                        </div>"""
+
+                    html_block = f"""
+                    <style>
+                    .pos-map-wrap {{
+                        position: relative; display: inline-block; width: 100%; max-width: 800px;
+                    }}
+                    .pos-map-wrap img {{
+                        width: 100%; border-radius: 8px; display: block;
+                    }}
+                    .pos-icon {{
+                        position: absolute; transform: translate(-50%, -50%);
+                        cursor: pointer; text-align: center; z-index: 10;
+                    }}
+                    .icon-dot {{ font-size: 1.6rem; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); }}
+                    .icon-label {{
+                        display: block; background: rgba(0,0,0,0.72); color: #fff;
+                        font-size: 0.65rem; border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+                        margin-top: 2px;
+                    }}
+                    .guide-bubble {{
+                        display: none; position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
+                        background: #1e3a5f; color: #fff; border-radius: 8px; padding: 8px 12px;
+                        font-size: 0.82rem; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                        min-width: 140px; z-index: 100;
+                    }}
+                    .guide-bubble.show {{ display: block; }}
+                    </style>
+                    <div class="pos-map-wrap">
+                        <img src="{img_url}" alt="{img_label}">
+                        {icons_html}
+                    </div>
+                    <script>
+                    function toggleGuide(el) {{
+                        var b = el.querySelector('.guide-bubble');
+                        // close all others first
+                        document.querySelectorAll('.guide-bubble.show').forEach(function(x){{
+                            if (x !== b) x.classList.remove('show');
+                        }});
+                        b.classList.toggle('show');
+                    }}
+                    </script>
+                    """
+                    st.components.v1.html(html_block, height=max(350, 60 + len(img_icons)*0), scrolling=False)
+
+                    # 아이콘 편집 패널
+                    edit_mode = st.session_state.pos_img_edit_id == img_id
+                    if st.button(
+                        "✏️ 아이콘 편집 닫기" if edit_mode else "📍 포지션 아이콘 추가/편집",
+                        key=f"toggle_edit_{img_id}",
+                    ):
+                        st.session_state.pos_img_edit_id = None if edit_mode else img_id
+                        st.rerun()
+
+                    if edit_mode:
+                        st.markdown("---")
+                        st.markdown("**📍 새 아이콘 추가**")
+                        st.caption("이미지 좌측 상단을 (0%, 0%), 우측 하단을 (100%, 100%)으로 입력하세요.")
+                        with st.form(f"add_icon_{img_id}", clear_on_submit=True):
+                            ic_col1, ic_col2 = st.columns(2)
+                            ic_x     = ic_col1.number_input("X 위치 (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.5, key=f"icx_{img_id}")
+                            ic_y     = ic_col2.number_input("Y 위치 (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.5, key=f"icy_{img_id}")
+                            ic_label = st.text_input("포지션 명칭 (예: 카메라1, 조명, LED)", key=f"iclabel_{img_id}")
+                            ic_guide = st.text_area("포지션 안내 문구", placeholder="예) 4번 카메라: 무대 정면 촬영 담당", height=80, key=f"icguide_{img_id}")
+                            if st.form_submit_button("➕ 아이콘 추가", type="primary"):
+                                if ic_label.strip():
+                                    for img in st.session_state.pos_map_images:
+                                        if img["id"] == img_id:
+                                            img["icons"].append({
+                                                "x": ic_x, "y": ic_y,
+                                                "label": ic_label.strip(),
+                                                "guide": ic_guide.strip(),
+                                            })
+                                    st.success(f"✅ 아이콘 '{ic_label.strip()}' 추가!")
+                                    st.rerun()
+                                else:
+                                    st.error("포지션 명칭을 입력해 주세요.")
+
+                        # 기존 아이콘 목록
+                        if img_icons:
+                            st.markdown("**현재 등록된 아이콘**")
+                            for i, ic in enumerate(img_icons):
+                                ic_r1, ic_r2, ic_r3 = st.columns([3, 4, 1])
+                                ic_r1.write(f"📍 **{ic.get('label','')}** ({ic['x']}%, {ic['y']}%)")
+                                ic_r2.caption(ic.get("guide", ""))
+                                if ic_r3.button("🗑️", key=f"del_ic_{img_id}_{i}"):
+                                    for img in st.session_state.pos_map_images:
+                                        if img["id"] == img_id:
+                                            img["icons"].pop(i)
+                                    st.rerun()
+
+    # ── 탭2: 날짜·포지션 배정 ───────────────────────────────────────
+    with tab_assign:
+        st.subheader("📝 날짜 & 포지션 배정")
+
+        # 날짜 선택 (항상 오늘 날짜가 기본값, 최신화)
+        assign_date = st.date_input(
+            "📅 예배 날짜 선택",
+            value=st.session_state.pos_assign_date,
+            key="pos_date_picker",
+        )
+        if assign_date != st.session_state.pos_assign_date:
+            st.session_state.pos_assign_date = assign_date
+
+        st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
+        st.markdown("---")
+
+        # 멤버 목록에서 이름 가져오기
+        if not st.session_state.att_loaded or st.session_state.members_db.empty:
+            st.warning("⚠️ 멤버 목록이 없습니다. 출석 데이터를 먼저 불러오세요.")
+        else:
+            member_names_pos = list(st.session_state.members_db["name"].values)
+            st.markdown("#### 👤 팀원 포지션 배정")
+
+            with st.form("pos_add_form", clear_on_submit=True):
+                pa_col1, pa_col2 = st.columns(2)
+                chosen_name_pa = pa_col1.selectbox(
+                    "이름 선택",
+                    ["선택하세요"] + member_names_pos,
+                    key="pa_name_sel",
+                )
+                chosen_pos_pa = pa_col2.selectbox(
+                    "포지션 선택",
+                    POSITIONS,
+                    key="pa_pos_sel",
+                )
+                if st.form_submit_button("➕ 배정 추가", type="primary", use_container_width=True):
+                    if chosen_name_pa == "선택하세요":
+                        st.error("❌ 이름을 선택해 주세요.")
+                    elif chosen_pos_pa == "선택 안 함":
+                        st.error("❌ 포지션을 선택해 주세요.")
+                    else:
+                        # 중복 이름은 업데이트
+                        existing = [a for a in st.session_state.pos_assignments if a["name"] != chosen_name_pa]
+                        existing.append({"name": chosen_name_pa, "position": chosen_pos_pa})
+                        st.session_state.pos_assignments = existing
+                        st.success(f"✅ {chosen_name_pa} → {chosen_pos_pa} 배정 완료!")
+                        st.rerun()
+
+            # 현재 배정 목록 표시
+            if st.session_state.pos_assignments:
+                st.markdown("---")
+                st.markdown("#### 📋 현재 배정 목록")
+                for i, asgn in enumerate(st.session_state.pos_assignments):
+                    a_c1, a_c2, a_c3 = st.columns([3, 3, 1])
+                    a_c1.write(f"👤 **{asgn['name']}**")
+                    a_c2.write(f"🎥 {asgn['position']}")
+                    if a_c3.button("🗑️", key=f"del_asgn_{i}"):
+                        st.session_state.pos_assignments.pop(i)
+                        st.rerun()
+
+                if st.button("🗑️ 배정 전체 초기화", type="secondary"):
+                    st.session_state.pos_assignments = []
+                    st.rerun()
+            else:
+                st.info("아직 배정된 팀원이 없습니다. 위 폼에서 추가하세요.")
+
+    # ── 탭3: 명단 확인 & 복사 ───────────────────────────────────────
+    with tab_roster:
+        st.subheader("📋 최종 포지션 명단")
+
+        date_str = st.session_state.pos_assign_date.strftime("%Y년 %m월 %d일")
+        weekday_str = ["월", "화", "수", "목", "금", "토", "일"][st.session_state.pos_assign_date.weekday()]
+        full_date_str = f"{date_str} ({weekday_str}요일)"
+
+        if not st.session_state.pos_assignments:
+            st.info("📭 배정된 팀원이 없습니다. '날짜·포지션 배정' 탭에서 먼저 배정해 주세요.")
+        else:
+            # 포지션 순서로 정렬 (POSITIONS 순서 기준)
+            sorted_asgn = sorted(
+                st.session_state.pos_assignments,
+                key=lambda x: POSITIONS.index(x["position"]) if x["position"] in POSITIONS else 999
+            )
+
+            # 시각적 명단 표시
+            st.markdown(f"### 📅 {full_date_str} 예배 포지션 명단")
+            st.markdown("---")
+
+            # 배치도 이미지 선택 표시
+            if st.session_state.pos_map_images:
+                img_labels = ["(배치도 선택 안 함)"] + [img["label"] for img in st.session_state.pos_map_images]
+                sel_img_label = st.selectbox("🗺️ 배치도 이미지 함께 보기", img_labels, key="roster_img_sel")
+                if sel_img_label != "(배치도 선택 안 함)":
+                    sel_img = next((x for x in st.session_state.pos_map_images if x["label"] == sel_img_label), None)
+                    if sel_img:
+                        st.image(sel_img["url"], caption=sel_img["label"], use_container_width=True)
+                st.markdown("---")
+
+            # 포지션별 카드 표시
+            cols_per_row = 3
+            rows = [sorted_asgn[i:i+cols_per_row] for i in range(0, len(sorted_asgn), cols_per_row)]
+            for row in rows:
+                rcols = st.columns(cols_per_row)
+                for ci, asgn in enumerate(row):
+                    with rcols[ci]:
+                        st.markdown(
+                            f"""<div style="background:#1e3a5f;border-radius:10px;padding:14px 16px;margin-bottom:8px;text-align:center;">
+                            <div style="font-size:1.3rem;font-weight:bold;color:#fff;">{asgn['name']}</div>
+                            <div style="font-size:0.95rem;color:#a8d1ff;margin-top:6px;">🎥 {asgn['position']}</div>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
+
+            st.markdown("---")
+
+            # 복사용 텍스트 생성
+            copy_lines = [f"📅 {full_date_str} 예배 포지션 명단", ""]
+            for asgn in sorted_asgn:
+                copy_lines.append(f"• {asgn['name']} — {asgn['position']}")
+
+            # 배치도 이미지 링크 추가 (URL인 경우)
+            if st.session_state.pos_map_images:
+                sel_label_for_copy = st.session_state.get("roster_img_sel", "(배치도 선택 안 함)")
+                if sel_label_for_copy != "(배치도 선택 안 함)":
+                    sel_img_c = next((x for x in st.session_state.pos_map_images if x["label"] == sel_label_for_copy), None)
+                    if sel_img_c and sel_img_c["url"].startswith("http"):
+                        copy_lines.append("")
+                        copy_lines.append(f"🗺️ 배치도: {sel_img_c['url']}")
+
+            copy_text = "\n".join(copy_lines)
+
+            st.markdown("#### 📋 복사용 텍스트")
+            st.text_area(
+                "아래 텍스트를 복사하여 붙여넣기 하세요",
+                value="\n".join(copy_lines),
+                height=max(150, 60 + len(sorted_asgn) * 28),
+                key="copy_text_area",
+            )
+            # 클립보드 복사 버튼 (JavaScript)
+            copy_js = copy_text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+            st.components.v1.html(f"""
+            <button onclick="navigator.clipboard.writeText(`{copy_js}`).then(()=>{{
+                this.textContent='✅ 복사 완료!'; setTimeout(()=>this.textContent='📋 클립보드에 복사',2000);
+            }})"
+            style="background:#1e3a5f;color:#fff;border:none;padding:10px 24px;border-radius:8px;
+                   font-size:1rem;cursor:pointer;margin-top:8px;font-weight:bold;">
+            📋 클립보드에 복사</button>
+            """, height=60)
+
+
 elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
     st.markdown("""
