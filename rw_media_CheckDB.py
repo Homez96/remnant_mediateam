@@ -403,13 +403,6 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.header("🎬 포지션 배치 관리")
 
-    # 출석 데이터가 없으면 불러오기 (멤버 목록 필요)
-    if not st.session_state.att_loaded:
-        st.warning("⚠️ 멤버 목록이 필요합니다. 출석 데이터를 먼저 불러오세요.")
-        if st.button("🔄 데이터 불러오기", type="primary"):
-            load_attendance_data()
-            st.rerun()
-
     tab_img, tab_assign, tab_roster = st.tabs(["🖼️ 배치도 이미지 관리", "📝 날짜·포지션 배정", "📋 명단 확인 & 복사"])
 
     # ── 탭1: 배치도 이미지 관리 ──────────────────────────────────────
@@ -586,7 +579,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
     with tab_assign:
         st.subheader("📝 날짜 & 포지션 배정")
 
-        # 날짜 선택 (항상 오늘 날짜가 기본값, 최신화)
+        # 날짜 선택 (항상 오늘 날짜 기본값)
         assign_date = st.date_input(
             "📅 예배 날짜 선택",
             value=st.session_state.pos_assign_date,
@@ -594,59 +587,79 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         )
         if assign_date != st.session_state.pos_assign_date:
             st.session_state.pos_assign_date = assign_date
-
         st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
         st.markdown("---")
 
-        # 멤버 목록에서 이름 가져오기
-        if not st.session_state.att_loaded or st.session_state.members_db.empty:
-            st.warning("⚠️ 멤버 목록이 없습니다. 출석 데이터를 먼저 불러오세요.")
-        else:
-            member_names_pos = list(st.session_state.members_db["name"].values)
-            st.markdown("#### 👤 팀원 포지션 배정")
+        # 자체 이름 목록 관리 (구글 시트 독립적)
+        if "pos_name_list" not in st.session_state:
+            st.session_state.pos_name_list = []
 
-            with st.form("pos_add_form", clear_on_submit=True):
-                pa_col1, pa_col2 = st.columns(2)
-                chosen_name_pa = pa_col1.selectbox(
-                    "이름 선택",
-                    ["선택하세요"] + member_names_pos,
-                    key="pa_name_sel",
-                )
-                chosen_pos_pa = pa_col2.selectbox(
-                    "포지션 선택",
-                    POSITIONS,
-                    key="pa_pos_sel",
-                )
-                if st.form_submit_button("➕ 배정 추가", type="primary", use_container_width=True):
-                    if chosen_name_pa == "선택하세요":
-                        st.error("❌ 이름을 선택해 주세요.")
-                    elif chosen_pos_pa == "선택 안 함":
-                        st.error("❌ 포지션을 선택해 주세요.")
+        with st.expander("👥 이름 목록 관리 (추가/삭제)", expanded=len(st.session_state.pos_name_list) == 0):
+            with st.form("name_list_form", clear_on_submit=True):
+                new_name_input = st.text_input("새 이름 추가", placeholder="팀원 이름 입력 후 추가")
+                if st.form_submit_button("➕ 이름 추가"):
+                    n = new_name_input.strip()
+                    if not n:
+                        st.error("이름을 입력해 주세요.")
+                    elif n in st.session_state.pos_name_list:
+                        st.warning(f"'{n}'은 이미 목록에 있습니다.")
                     else:
-                        # 중복 이름은 업데이트
-                        existing = [a for a in st.session_state.pos_assignments if a["name"] != chosen_name_pa]
-                        existing.append({"name": chosen_name_pa, "position": chosen_pos_pa})
-                        st.session_state.pos_assignments = existing
-                        st.success(f"✅ {chosen_name_pa} → {chosen_pos_pa} 배정 완료!")
+                        st.session_state.pos_name_list.append(n)
                         st.rerun()
 
-            # 현재 배정 목록 표시
-            if st.session_state.pos_assignments:
-                st.markdown("---")
-                st.markdown("#### 📋 현재 배정 목록")
-                for i, asgn in enumerate(st.session_state.pos_assignments):
-                    a_c1, a_c2, a_c3 = st.columns([3, 3, 1])
-                    a_c1.write(f"👤 **{asgn['name']}**")
-                    a_c2.write(f"🎥 {asgn['position']}")
-                    if a_c3.button("🗑️", key=f"del_asgn_{i}"):
-                        st.session_state.pos_assignments.pop(i)
-                        st.rerun()
+            if st.session_state.pos_name_list:
+                st.markdown("**현재 이름 목록:**")
+                nl_cols = st.columns(4)
+                for ni, nm in enumerate(st.session_state.pos_name_list):
+                    with nl_cols[ni % 4]:
+                        if st.button(f"❌ {nm}", key=f"del_name_{ni}", help="목록에서 제거"):
+                            st.session_state.pos_name_list.pop(ni)
+                            st.rerun()
 
-                if st.button("🗑️ 배정 전체 초기화", type="secondary"):
-                    st.session_state.pos_assignments = []
-                    st.rerun()
+        st.markdown("#### 👤 팀원 포지션 배정")
+
+        name_opts = ["선택하세요"] + st.session_state.pos_name_list if st.session_state.pos_name_list else None
+
+        with st.form("pos_add_form", clear_on_submit=True):
+            pa_col1, pa_col2 = st.columns(2)
+            if name_opts:
+                chosen_name_pa = pa_col1.selectbox("이름 선택", name_opts, key="pa_name_sel")
+                direct_name_pa = ""
             else:
-                st.info("아직 배정된 팀원이 없습니다. 위 폼에서 추가하세요.")
+                chosen_name_pa = ""
+                direct_name_pa = pa_col1.text_input("이름 직접 입력", placeholder="위 목록에 이름을 먼저 추가하거나 여기 입력", key="pa_name_direct")
+
+            chosen_pos_pa = pa_col2.selectbox("포지션 선택", POSITIONS, key="pa_pos_sel")
+
+            if st.form_submit_button("➕ 배정 추가", type="primary", use_container_width=True):
+                final_name = (chosen_name_pa if name_opts else direct_name_pa.strip())
+                if not final_name or final_name == "선택하세요":
+                    st.error("❌ 이름을 선택하거나 입력해 주세요.")
+                elif chosen_pos_pa == "선택 안 함":
+                    st.error("❌ 포지션을 선택해 주세요.")
+                else:
+                    existing = [a for a in st.session_state.pos_assignments if a["name"] != final_name]
+                    existing.append({"name": final_name, "position": chosen_pos_pa})
+                    st.session_state.pos_assignments = existing
+                    st.success(f"✅ {final_name} → {chosen_pos_pa} 배정 완료!")
+                    st.rerun()
+
+        # 현재 배정 목록
+        if st.session_state.pos_assignments:
+            st.markdown("---")
+            st.markdown("#### 📋 현재 배정 목록")
+            for i, asgn in enumerate(st.session_state.pos_assignments):
+                a_c1, a_c2, a_c3 = st.columns([3, 3, 1])
+                a_c1.write(f"👤 **{asgn['name']}**")
+                a_c2.write(f"🎥 {asgn['position']}")
+                if a_c3.button("🗑️", key=f"del_asgn_{i}"):
+                    st.session_state.pos_assignments.pop(i)
+                    st.rerun()
+            if st.button("🗑️ 배정 전체 초기화", type="secondary"):
+                st.session_state.pos_assignments = []
+                st.rerun()
+        else:
+            st.info("아직 배정된 팀원이 없습니다. 위 폼에서 추가하세요.")
 
     # ── 탭3: 명단 확인 & 복사 ───────────────────────────────────────
     with tab_roster:
