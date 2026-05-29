@@ -74,15 +74,16 @@ POSITIONS    = ["선택 안 함", "4번 카메라", "5번 카메라", "6번 카�
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1584S2jzLNFlSJHAgNOBo_w6HjwMwlJ7pUei4jVqeJrU"
 
 conn = None
+_conn_error = ""
 try:
     from streamlit_gsheets import GSheetsConnection
     conn = st.connection("gsheets", type=GSheetsConnection)
 except Exception as e:
-    st.error(f"구글 시트 연결 오류: {e}")
+    _conn_error = str(e)
 
 def require_conn() -> bool:
     if conn is None:
-        st.error("구글 시트 연결이 필요합니다. 연결 설정을 확인해 주세요.")
+        st.error(f"구글 시트 연결 오류: {_conn_error}" if _conn_error else "구글 시트 연결이 필요합니다. 연결 설정을 확인해 주세요.")
         return False
     return True
 
@@ -112,18 +113,31 @@ def clean_df(df, schema: dict) -> pd.DataFrame:
 
 def load_attendance_data():
     if not require_conn(): return
-    with st.spinner("⏳ 출석 데이터 불러오는 중..."):
-        try:
-            ttl = get_ttl()
-            df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members",    ttl=ttl)
-            df_a = conn.read(spreadsheet=SHEET_URL, worksheet="attendance", ttl=ttl)
-            st.session_state.members_db = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-            st.session_state.attend_db  = clean_df(df_a, {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
-            st.session_state.att_loaded = True
-            st.session_state.force_refresh = False
-        except Exception as e:
-            msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"출석 로드 실패: {e}"
-            st.error(msg)
+    try:
+        ttl = get_ttl()
+        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members",    ttl=ttl)
+        df_a = conn.read(spreadsheet=SHEET_URL, worksheet="attendance", ttl=ttl)
+        st.session_state.members_db = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.attend_db  = clean_df(df_a, {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
+        st.session_state.att_loaded = True
+        st.session_state.force_refresh = False
+    except Exception as e:
+        msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"출석 로드 실패: {e}"
+        st.error(msg)
+
+
+def load_members_only():
+    """멤버 목록만 조용히 불러옴 (스피너/rerun 없음, 포지션 배치 탭용)"""
+    if not require_conn():
+        return False
+    try:
+        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members", ttl=1 if st.session_state.force_refresh else 600)
+        st.session_state.members_db = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.att_loaded = True
+        return True
+    except Exception as e:
+        st.error(f"멤버 로드 실패: {e}")
+        return False
 
 def load_community_data():
     if not require_conn(): return
@@ -206,7 +220,8 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
     if not st.session_state.att_loaded:
         st.warning("⚠️ 구글 시트에서 출석 데이터를 가져오기 전입니다.")
         if st.button("🔄 출석 데이터 불러오기", type="primary", use_container_width=True):
-            load_attendance_data()
+            with st.spinner("⏳ 출석 데이터 불러오는 중..."):
+                load_attendance_data()
             st.rerun()
     else:
         selected_date = st.date_input("📅 날짜 선택", st.session_state.selected_date_val)
@@ -590,19 +605,16 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
         st.markdown("---")
 
-        # 구글 시트 멤버 목록 불러오기
-        if not st.session_state.att_loaded:
-            load_col, _ = st.columns([2, 3])
-            if load_col.button("🔄 멤버 명단 불러오기", type="primary", use_container_width=True):
-                load_attendance_data()
+        # 멤버 명단 불러오기 (버튼 클릭 시에만 실행)
+        hd_col, btn_col = st.columns([3, 1])
+        with btn_col:
+            if st.button("🔄 명단 불러오기", key="pos_reload_members", use_container_width=True):
+                with st.spinner("⏳ 멤버 명단 불러오는 중..."):
+                    load_members_only()
                 st.rerun()
-            st.info("👆 구글 시트에서 멤버 명단을 불러온 뒤 배정할 수 있습니다.")
-        else:
-            member_names_pos = list(st.session_state.members_db["name"].values)
-            rc, _ = st.columns([3, 2])
-            if rc.button("🔄 명단 새로고침", key="pos_reload_members"):
-                load_attendance_data()
-                st.rerun()
+
+        if not st.session_state.att_loaded or st.session_state.members_db.empty:
+            st.info("👆 오른쪽 버튼을 눌러 구글 시트에서 멤버 명단을 불러오세요.")
 
         st.markdown("#### 👤 팀원 포지션 배정")
 
