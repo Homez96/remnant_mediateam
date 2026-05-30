@@ -43,21 +43,22 @@ _defaults = {
     "cat_db":            pd.DataFrame(columns=["id", "name", "parent_id"]),
     "post_db":           pd.DataFrame(columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]),
     "comm_db":           pd.DataFrame(columns=["id", "post_id", "author", "content", "created_at"]),
-    "att_loaded":        False,
+    # FIX #2: att_loaded → members_loaded / attend_loaded 로 분리
+    "members_loaded":    False,
+    "attend_loaded":     False,
     "board_loaded":      False,
     "force_refresh":     False,
     "current_filter":    "전체",
     "selected_date_val": date.today(),
     "view_post_id":      None,
     "comm_write_mode":   False,
-    "sel_channel_id":    None,   # None = 전체보기, str = 선택된 채널 id
-    "sel_sub_cat_id":    None,   # None = 채널 전체, str = 선택된 폴더 id
-    "show_add_ch":       False,  # 채널 추가 입력란 표시 여부
-    "show_add_sc":       False,  # 폴더(세부 카테고리) 추가 입력란 표시 여부
-    # ── 포지션 배치 관리 ──────────────────────────────────
-    "pos_map_images":    [],        # [{"id":str, "url":str, "label":str, "icons":[...]}]
+    "sel_channel_id":    None,
+    "sel_sub_cat_id":    None,
+    "show_add_ch":       False,
+    "show_add_sc":       False,
+    "pos_map_images":    [],
     "pos_assign_date":   date.today(),
-    "pos_assignments":   [],        # [{"name":str, "position":str}]
+    "pos_assignments":   [],
     "pos_img_edit_id":   None,
 }
 for k, v in _defaults.items():
@@ -88,6 +89,7 @@ def require_conn() -> bool:
     return True
 
 def get_ttl() -> int:
+    # FIX #1: force_refresh 플래그를 여기서 소비하지 않음 — 로드 함수 안에서만 리셋
     return 1 if st.session_state.force_refresh else 600
 
 def clean_id(val) -> str:
@@ -117,23 +119,25 @@ def load_attendance_data():
         ttl = get_ttl()
         df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members",    ttl=ttl)
         df_a = conn.read(spreadsheet=SHEET_URL, worksheet="attendance", ttl=ttl)
-        st.session_state.members_db = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-        st.session_state.attend_db  = clean_df(df_a, {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
-        st.session_state.att_loaded = True
-        st.session_state.force_refresh = False
+        st.session_state.members_db   = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.attend_db    = clean_df(df_a, {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
+        # FIX #2: 두 플래그 모두 설정
+        st.session_state.members_loaded = True
+        st.session_state.attend_loaded  = True
+        st.session_state.force_refresh  = False  # FIX #1: 로드 완료 후에만 리셋
     except Exception as e:
         msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"출석 로드 실패: {e}"
         st.error(msg)
 
-
 def load_members_only():
-    """멤버 목록만 조용히 불러옴 (스피너/rerun 없음, 포지션 배치 탭용)"""
+    """멤버 목록만 조용히 불러옴 (포지션 배치 탭용)"""
     if not require_conn():
         return False
     try:
-        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members", ttl=1 if st.session_state.force_refresh else 600)
-        st.session_state.members_db = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-        st.session_state.att_loaded = True
+        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members", ttl=get_ttl())
+        st.session_state.members_db     = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.members_loaded = True  # FIX #2: members_loaded만 설정 (attend_loaded는 건드리지 않음)
+        st.session_state.force_refresh  = False
         return True
     except Exception as e:
         st.error(f"멤버 로드 실패: {e}")
@@ -152,11 +156,12 @@ def load_community_data():
             cat_db = clean_df(df_c, {"id":"str","name":"str","parent_id":"str"})
             if "parent_id" not in cat_db.columns:
                 cat_db["parent_id"] = ""
-            st.session_state.cat_db     = cat_db
-            st.session_state.post_db    = clean_df(df_p,  {"id":"str","category_id":"str","title":"str","content":"str","links":"str","image_urls":"str","created_at":"str"})
-            st.session_state.comm_db    = clean_df(df_cm, {"id":"str","post_id":"str","author":"str","content":"str","created_at":"str"})
-            st.session_state.board_loaded = True
-            st.session_state.force_refresh = False
+            st.session_state.cat_db      = cat_db
+            st.session_state.post_db     = clean_df(df_p,  {"id":"str","category_id":"str","title":"str","content":"str","links":"str","image_urls":"str","created_at":"str"})
+            st.session_state.comm_db     = clean_df(df_cm, {"id":"str","post_id":"str","author":"str","content":"str","created_at":"str"})
+            st.session_state.board_loaded   = True
+            st.session_state.members_loaded = True  # FIX #2
+            st.session_state.force_refresh  = False  # FIX #1
         except Exception as e:
             msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"게시판 로드 실패: {e}"
             st.error(msg)
@@ -170,13 +175,17 @@ with st.sidebar:
     sel = st.radio("메뉴 이동", MENU_OPTIONS, index=idx)
     if sel != st.session_state.page:
         st.session_state.page = sel
-        st.session_state.view_post_id   = None
+        st.session_state.view_post_id    = None
         st.session_state.comm_write_mode = False
+        # FIX #5: 페이지 이동 시 폴더 추가창도 닫기
+        st.session_state.show_add_ch     = False
+        st.session_state.show_add_sc     = False
         st.rerun()
     st.write("---")
     if st.button("🔄 앱 전체 강제 새로고침"):
         st.session_state.force_refresh   = True
-        st.session_state.att_loaded      = False
+        st.session_state.members_loaded  = False  # FIX #2
+        st.session_state.attend_loaded   = False  # FIX #2
         st.session_state.board_loaded    = False
         st.session_state.view_post_id    = None
         st.session_state.comm_write_mode = False
@@ -217,7 +226,8 @@ if st.session_state.page == "🏠 홈 (대시보드)":
 elif st.session_state.page == "⛪ 예배 출석 관리":
     st.header("⛪ 예배 출석 관리")
 
-    if not st.session_state.att_loaded:
+    # FIX #2: attend_loaded 기준으로 판단
+    if not st.session_state.attend_loaded:
         st.warning("⚠️ 구글 시트에서 출석 데이터를 가져오기 전입니다.")
         if st.button("🔄 출석 데이터 불러오기", type="primary", use_container_width=True):
             with st.spinner("⏳ 출석 데이터 불러오는 중..."):
@@ -404,15 +414,6 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════
-# 7. 팀 커뮤니티 게시판 — Slack 스타일 UI v3
-#    변경사항:
-#    - 아웃채널(사이드바): 채널 목록 자체가 드래그 가능 (multi_containers)
-#      → "현재 채널" 컨테이너로 끌어다 놓으면 선택, "채널 목록" 안에서 끌면 순서 변경
-#    - 인채널(메인): 노션 페이지 스타일 폴더(세부 카테고리) UI
-#      → 폴더 추가/삭제는 모두 인채널 영역에서
-# ══════════════════════════════════════════════════════════════════════
-
-# ══════════════════════════════════════════════════════════════════════
 # 7. 포지션 배치 관리
 # ══════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "🎬 포지션 배치 관리":
@@ -420,12 +421,10 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
     tab_img, tab_assign, tab_roster = st.tabs(["🖼️ 배치도 이미지 관리", "📝 날짜·포지션 배정", "📋 명단 확인 & 복사"])
 
-    # ── 탭1: 배치도 이미지 관리 ──────────────────────────────────────
     with tab_img:
         st.subheader("🖼️ 배치도 이미지 관리")
         st.caption("배치도 이미지를 업로드하고, 이미지 위 각 포지션 아이콘 좌표를 설정하면 클릭 시 안내 문구가 표시됩니다.")
 
-        # 이미지 업로드
         with st.expander("➕ 새 배치도 이미지 추가", expanded=len(st.session_state.pos_map_images) == 0):
             up_label = st.text_input("배치도 이름 (예: 1부 예배 배치도)", key="pos_img_label_input")
             up_file  = st.file_uploader("이미지 파일 선택", type=["png", "jpg", "jpeg", "webp"], key="pos_img_upload")
@@ -448,7 +447,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다!")
                         st.rerun()
                     else:
-                        # ImgBB 없으면 base64로 메모리 저장
                         import base64
                         b64 = base64.b64encode(up_file.getvalue()).decode()
                         ext = up_file.name.rsplit(".", 1)[-1].lower()
@@ -463,7 +461,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다! (로컬 저장)")
                         st.rerun()
 
-        # 이미지 목록 표시
         if not st.session_state.pos_map_images:
             st.info("📭 등록된 배치도 이미지가 없습니다. 위에서 추가해 주세요.")
         else:
@@ -486,8 +483,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                 st.session_state.pos_img_edit_id = None
                             st.rerun()
 
-                    # 이미지 표시 + 아이콘 클릭 안내 (HTML)
-                    # 아이콘들을 이미지 위에 오버레이로 표시
                     icons_html = ""
                     for ic in img_icons:
                         pos_label = ic.get("label") or ic.get("pos", "")
@@ -534,7 +529,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     <script>
                     function toggleGuide(el) {{
                         var b = el.querySelector('.guide-bubble');
-                        // close all others first
                         document.querySelectorAll('.guide-bubble.show').forEach(function(x){{
                             if (x !== b) x.classList.remove('show');
                         }});
@@ -544,7 +538,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     """
                     st.components.v1.html(html_block, height=max(350, 60 + len(img_icons)*0), scrolling=False)
 
-                    # 아이콘 편집 패널
                     edit_mode = st.session_state.pos_img_edit_id == img_id
                     if st.button(
                         "✏️ 아이콘 편집 닫기" if edit_mode else "📍 포지션 아이콘 추가/편집",
@@ -577,7 +570,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                 else:
                                     st.error("포지션 명칭을 입력해 주세요.")
 
-                        # 기존 아이콘 목록
                         if img_icons:
                             st.markdown("**현재 등록된 아이콘**")
                             for i, ic in enumerate(img_icons):
@@ -590,11 +582,9 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                             img["icons"].pop(i)
                                     st.rerun()
 
-    # ── 탭2: 날짜·포지션 배정 ───────────────────────────────────────
     with tab_assign:
         st.subheader("📝 날짜 & 포지션 배정")
 
-        # 날짜 선택 (항상 오늘 날짜 기본값)
         assign_date = st.date_input(
             "📅 예배 날짜 선택",
             value=st.session_state.pos_assign_date,
@@ -605,7 +595,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
         st.markdown("---")
 
-        # 멤버 명단 불러오기 (버튼 클릭 시에만 실행)
         hd_col, btn_col = st.columns([3, 1])
         with btn_col:
             if st.button("🔄 명단 불러오기", key="pos_reload_members", use_container_width=True):
@@ -613,13 +602,13 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     load_members_only()
                 st.rerun()
 
-        if not st.session_state.att_loaded or st.session_state.members_db.empty:
+        # FIX #2: members_loaded 기준으로만 판단
+        if not st.session_state.members_loaded or st.session_state.members_db.empty:
             st.info("👆 오른쪽 버튼을 눌러 구글 시트에서 멤버 명단을 불러오세요.")
 
         st.markdown("#### 👤 팀원 포지션 배정")
 
-        # 멤버 목록 구성
-        if st.session_state.att_loaded and not st.session_state.members_db.empty:
+        if st.session_state.members_loaded and not st.session_state.members_db.empty:
             member_names_pos = list(st.session_state.members_db["name"].values)
             name_opts = ["선택하세요"] + member_names_pos
         else:
@@ -649,7 +638,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     st.success(f"✅ {chosen_name_pa} → {chosen_pos_pa} 배정 완료!")
                     st.rerun()
 
-        # 현재 배정 목록
         if st.session_state.pos_assignments:
             st.markdown("---")
             st.markdown("#### 📋 현재 배정 목록")
@@ -666,30 +654,26 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         else:
             st.info("아직 배정된 팀원이 없습니다. 위 폼에서 추가하세요.")
 
-    # ── 탭3: 명단 확인 & 복사 ───────────────────────────────────────
     with tab_roster:
         st.subheader("📋 최종 포지션 명단")
 
-        date_str = st.session_state.pos_assign_date.strftime("%Y년 %m월 %d일")
-        weekday_str = ["월", "화", "수", "목", "금", "토", "일"][st.session_state.pos_assign_date.weekday()]
+        date_str     = st.session_state.pos_assign_date.strftime("%Y년 %m월 %d일")
+        weekday_str  = ["월", "화", "수", "목", "금", "토", "일"][st.session_state.pos_assign_date.weekday()]
         full_date_str = f"{date_str} ({weekday_str}요일)"
 
         if not st.session_state.pos_assignments:
             st.info("📭 배정된 팀원이 없습니다. '날짜·포지션 배정' 탭에서 먼저 배정해 주세요.")
         else:
-            # 포지션 순서로 정렬 (POSITIONS 순서 기준)
             sorted_asgn = sorted(
                 st.session_state.pos_assignments,
                 key=lambda x: POSITIONS.index(x["position"]) if x["position"] in POSITIONS else 999
             )
 
-            # 시각적 명단 표시
             st.markdown(f"### 📅 {full_date_str} 예배 포지션 명단")
             st.markdown("---")
 
-            # 배치도 이미지 선택 표시
             if st.session_state.pos_map_images:
-                img_labels = ["(배치도 선택 안 함)"] + [img["label"] for img in st.session_state.pos_map_images]
+                img_labels    = ["(배치도 선택 안 함)"] + [img["label"] for img in st.session_state.pos_map_images]
                 sel_img_label = st.selectbox("🗺️ 배치도 이미지 함께 보기", img_labels, key="roster_img_sel")
                 if sel_img_label != "(배치도 선택 안 함)":
                     sel_img = next((x for x in st.session_state.pos_map_images if x["label"] == sel_img_label), None)
@@ -697,7 +681,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         st.image(sel_img["url"], caption=sel_img["label"], use_container_width=True)
                 st.markdown("---")
 
-            # 포지션별 카드 표시
             cols_per_row = 3
             rows = [sorted_asgn[i:i+cols_per_row] for i in range(0, len(sorted_asgn), cols_per_row)]
             for row in rows:
@@ -714,12 +697,10 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
             st.markdown("---")
 
-            # 복사용 텍스트 생성
             copy_lines = [f"📅 {full_date_str} 예배 포지션 명단", ""]
             for asgn in sorted_asgn:
                 copy_lines.append(f"• {asgn['name']} — {asgn['position']}")
 
-            # 배치도 이미지 링크 추가 (URL인 경우)
             if st.session_state.pos_map_images:
                 sel_label_for_copy = st.session_state.get("roster_img_sel", "(배치도 선택 안 함)")
                 if sel_label_for_copy != "(배치도 선택 안 함)":
@@ -737,7 +718,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 height=max(150, 60 + len(sorted_asgn) * 28),
                 key="copy_text_area",
             )
-            # 클립보드 복사 버튼 (JavaScript)
             copy_js = copy_text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
             st.components.v1.html(f"""
             <button onclick="navigator.clipboard.writeText(`{copy_js}`).then(()=>{{
@@ -749,28 +729,27 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             """, height=60)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 8. 팀 커뮤니티 게시판
+# ══════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
     st.markdown("""
     <style>
-    /* 아웃채널 배경 (사이드바 컬럼) */
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child {
         background-color: #3f0e40;
         min-height: 80vh;
         padding: 8px 6px;
     }
-    /* 사이드바 내부 텍스트 색상 */
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child .stMarkdown p,
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child h3 {
         color: #fff;
     }
-    /* sort_items 컨테이너 헤더 흰색 */
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child h2 {
         color: #fff !important; font-size:12px !important;
         letter-spacing:1px; text-transform:uppercase;
         margin: 8px 4px 4px !important;
     }
-    /* sort_items 아이템 스타일 */
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child ul {
         padding-left: 0 !important; list-style: none;
     }
@@ -782,11 +761,9 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
     section[data-testid="stMain"] div[data-testid="stColumns"] > div:first-child li:hover {
         background:#5a1d5b;
     }
-    /* 게시글 카드 */
     .post-title   { font-size:15px; font-weight:600; color:#1d1c1d; }
     .post-preview { font-size:13px; color:#616061; margin-top:2px; }
     .post-meta    { font-size:12px; color:#97979a; margin-top:6px; }
-    /* 댓글 */
     .comment-block {
         border-left:3px solid #e8e8e8;
         padding:6px 12px; margin:6px 0;
@@ -809,7 +786,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
         if "parent_id" not in cat_df.columns:
             cat_df["parent_id"] = ""
 
-        # ── 헬퍼 ─────────────────────────────────────────────────────
         def get_channels(df):
             return df[df["parent_id"] == ""].reset_index(drop=True)
 
@@ -827,12 +803,16 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
             return full_p_db[full_p_db["category_id"].isin([ch_id_l] + sub_ids)]
 
         def save_categories(new_cat_df):
+            # FIX #7: require_conn() 체크 추가
+            if not require_conn():
+                return False
             conn.update(
                 spreadsheet=SHEET_URL, worksheet="categories",
                 data=pd.DataFrame(new_cat_df, columns=["id","name","parent_id"]).astype(str),
             )
             st.session_state.cat_db = new_cat_df.reset_index(drop=True)
             st.session_state.force_refresh = True
+            return True
 
         channels = get_channels(st.session_state.cat_db)
         ch_id = st.session_state.sel_channel_id
@@ -840,16 +820,12 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
         col_sidebar, col_main = st.columns([1, 3.5], gap="small")
 
-        # ════════════════════════════════════════════════════════════
-        # 아웃채널 영역 (사이드바)
-        # ════════════════════════════════════════════════════════════
         with col_sidebar:
             st.markdown(
                 "<div style='color:#fff;font-size:18px;font-weight:700;padding:8px 8px 4px;'>⛪ RW 미디어팀</div>",
                 unsafe_allow_html=True,
             )
 
-            # 전체 보기 버튼
             is_all = ch_id is None
             if st.button(
                 ("🔵 " if is_all else "   ") + "# 전체 보기",
@@ -861,9 +837,10 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 st.session_state.sel_sub_cat_id  = None
                 st.session_state.comm_write_mode = False
                 st.session_state.view_post_id    = None
+                # FIX #5: 채널 전환 시 폴더 추가창 닫기
+                st.session_state.show_add_sc     = False
                 st.rerun()
 
-            # 드래그 가능한 채널 목록 (현재 채널 / 모든 채널 두 컨테이너)
             if not channels.empty:
                 ch_names_all = list(channels["name"].values)
                 current_name = None
@@ -896,7 +873,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     new_oth  = result[1]["items"] if len(result) > 1 else []
 
                     if new_curr != current_items or new_oth != other_items:
-                        # 현재 채널 컨테이너에 여러 개 들어오면 첫 번째만 현재로, 나머지는 목록으로
                         if new_curr:
                             new_sel_name = new_curr[0]
                             overflow     = new_curr[1:]
@@ -919,16 +895,16 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
                         new_cat_df = pd.concat([new_channels_df, non_ch], ignore_index=True)
 
-                        if require_conn():
-                            save_categories(new_cat_df)
+                        if save_categories(new_cat_df):  # FIX #7: 반환값 확인
                             st.session_state.sel_channel_id  = new_sel_id
                             st.session_state.sel_sub_cat_id  = None
                             st.session_state.comm_write_mode = False
                             st.session_state.view_post_id    = None
+                            # FIX #5
+                            st.session_state.show_add_sc     = False
                             st.rerun()
 
                 except ImportError:
-                    # 폴백: 클릭형 버튼 + ↑↓ 순서 변경
                     st.caption("⚠️ 드래그 기능: `pip install streamlit-sortables`")
                     for i, (_, ch) in enumerate(channels.iterrows()):
                         is_sel = ch_id == ch["id"]
@@ -944,6 +920,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 st.session_state.sel_sub_cat_id  = None
                                 st.session_state.comm_write_mode = False
                                 st.session_state.view_post_id    = None
+                                # FIX #5
+                                st.session_state.show_add_sc     = False
                                 st.rerun()
                         with c_up:
                             if i > 0 and st.button("↑", key=f"up_{ch['id']}", use_container_width=True):
@@ -952,9 +930,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 new_channels = pd.DataFrame(rows).reset_index(drop=True)
                                 non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
                                 new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
-                                if require_conn():
-                                    save_categories(new_cat)
-                                    st.rerun()
+                                save_categories(new_cat)
+                                st.rerun()
                         with c_dn:
                             if i < len(channels) - 1 and st.button("↓", key=f"dn_{ch['id']}", use_container_width=True):
                                 rows = [r.to_dict() for _, r in channels.iterrows()]
@@ -962,11 +939,9 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 new_channels = pd.DataFrame(rows).reset_index(drop=True)
                                 non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
                                 new_cat = pd.concat([new_channels, non_ch], ignore_index=True)
-                                if require_conn():
-                                    save_categories(new_cat)
-                                    st.rerun()
+                                save_categories(new_cat)
+                                st.rerun()
 
-            # 채널 추가
             st.markdown("<hr style='border-color:#5e3060;margin:8px 0;'>", unsafe_allow_html=True)
 
             if not st.session_state.show_add_ch:
@@ -978,23 +953,19 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                             placeholder="채널명 입력", label_visibility="collapsed")
                 ca1, ca2 = st.columns(2)
                 if ca1.button("추가", key="confirm_add_ch", type="primary"):
-                    if new_ch_name.strip() and require_conn():
+                    if new_ch_name.strip():
                         new_ch  = pd.DataFrame([{"id": str(int(time.time()*1000)),
                                                  "name": new_ch_name.strip(),
                                                  "parent_id": ""}])
                         new_cat = pd.concat([st.session_state.cat_db, new_ch], ignore_index=True)
-                        save_categories(new_cat)
-                        st.session_state.show_add_ch = False
-                        st.rerun()
+                        if save_categories(new_cat):  # FIX #7
+                            st.session_state.show_add_ch = False
+                            st.rerun()
                 if ca2.button("취소", key="cancel_add_ch"):
                     st.session_state.show_add_ch = False
                     st.rerun()
 
-        # ════════════════════════════════════════════════════════════
-        # 인채널 영역 (메인 콘텐츠)
-        # ════════════════════════════════════════════════════════════
         with col_main:
-            # 현재 위치 헤더
             if ch_id is None:
                 header_text = "전체 보기"
             else:
@@ -1013,8 +984,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
             )
             st.markdown("<hr style='margin:4px 0 12px;'>", unsafe_allow_html=True)
 
-            # ── 폴더 영역 (Notion 페이지 스타일) ───────────────────
-            # 채널 진입 + 글쓰기/상세 모드가 아닐 때만 표시
             show_folders = (
                 ch_id is not None
                 and not st.session_state.comm_write_mode
@@ -1029,10 +998,9 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 )
 
                 num_folders = len(sub_cats)
-                total_cells = num_folders + 2  # 전체 + 폴더들 + 추가
+                total_cells = num_folders + 2
                 btn_cols = st.columns(max(total_cells, 4))
 
-                # 전체 폴더
                 is_all_sc = sc_id is None
                 if btn_cols[0].button(
                     ("📁 " if is_all_sc else "📂 ") + "전체",
@@ -1040,10 +1008,11 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     use_container_width=True,
                     type="primary" if is_all_sc else "secondary",
                 ):
-                    st.session_state.sel_sub_cat_id = None
+                    st.session_state.sel_sub_cat_id  = None
+                    # FIX #3: 폴더 전환 시 글쓰기 모드 리셋
+                    st.session_state.comm_write_mode = False
                     st.rerun()
 
-                # 각 폴더
                 for i, (_, sc) in enumerate(sub_cats.iterrows()):
                     is_active = sc_id == sc["id"]
                     if btn_cols[i + 1].button(
@@ -1052,10 +1021,11 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         use_container_width=True,
                         type="primary" if is_active else "secondary",
                     ):
-                        st.session_state.sel_sub_cat_id = sc["id"]
+                        st.session_state.sel_sub_cat_id  = sc["id"]
+                        # FIX #3: 폴더 전환 시 글쓰기 모드 리셋
+                        st.session_state.comm_write_mode = False
                         st.rerun()
 
-                # 폴더 추가 버튼
                 if btn_cols[num_folders + 1].button(
                     "➕ 폴더",
                     key="sc_pill_add",
@@ -1064,7 +1034,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     st.session_state.show_add_sc = not st.session_state.show_add_sc
                     st.rerun()
 
-                # 폴더 추가 입력란
                 if st.session_state.show_add_sc:
                     cf1, cf2, cf3 = st.columns([4, 1, 1])
                     with cf1:
@@ -1075,27 +1044,25 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         )
                     with cf2:
                         if st.button("추가", key="confirm_sc", type="primary", use_container_width=True):
-                            if new_sc_name.strip() and require_conn():
+                            if new_sc_name.strip():
                                 new_sc  = pd.DataFrame([{
                                     "id": str(int(time.time()*1000)),
                                     "name": new_sc_name.strip(),
                                     "parent_id": ch_id,
                                 }])
                                 new_cat = pd.concat([st.session_state.cat_db, new_sc], ignore_index=True)
-                                save_categories(new_cat)
-                                st.session_state.show_add_sc = False
-                                st.rerun()
+                                if save_categories(new_cat):  # FIX #7
+                                    st.session_state.show_add_sc = False
+                                    st.rerun()
                     with cf3:
                         if st.button("취소", key="cancel_sc", use_container_width=True):
                             st.session_state.show_add_sc = False
                             st.rerun()
 
-                # 현재 폴더 삭제 (특정 폴더 선택 중일 때만)
                 if sc_id is not None:
                     if st.button("🗑️ 현재 폴더 삭제", key="del_sc_main", type="secondary"):
-                        if require_conn():
-                            new_cat = st.session_state.cat_db[st.session_state.cat_db["id"] != sc_id].reset_index(drop=True)
-                            save_categories(new_cat)
+                        new_cat = st.session_state.cat_db[st.session_state.cat_db["id"] != sc_id].reset_index(drop=True)
+                        if save_categories(new_cat):  # FIX #7
                             st.session_state.sel_sub_cat_id = None
                             st.rerun()
 
@@ -1109,7 +1076,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
                 st.subheader("✏️ 새 게시글 작성")
 
-                # 글쓰기 카테고리 결정
                 cat_options = []
                 if ch_id is not None:
                     sub_cats_w = get_sub_cats(st.session_state.cat_db, ch_id)
@@ -1120,7 +1086,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         else:
                             default_cat_idx = 0
                     else:
-                        ch_row2 = st.session_state.cat_db[st.session_state.cat_db["id"] == ch_id]
+                        ch_row2  = st.session_state.cat_db[st.session_state.cat_db["id"] == ch_id]
                         ch_name2 = ch_row2["name"].values[0] if not ch_row2.empty else "채널"
                         cat_options = [(ch_id, ch_name2)]
                         default_cat_idx = 0
@@ -1133,8 +1099,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     st.warning("⚠️ 먼저 채널을 추가해주세요.")
                 else:
                     with st.form("write_post", clear_on_submit=True):
-                        cat_labels   = [label for _, label in cat_options]
-                        chosen_label = st.selectbox("게시 위치 (폴더) 선택", cat_labels, index=default_cat_idx)
+                        cat_labels    = [label for _, label in cat_options]
+                        chosen_label  = st.selectbox("게시 위치 (폴더) 선택", cat_labels, index=default_cat_idx)
                         chosen_cat_id = cat_options[cat_labels.index(chosen_label)][0]
 
                         p_title   = st.text_input("제목 *")
@@ -1163,8 +1129,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                     updated_p = pd.concat([full_p_db, new_p], ignore_index=True)
                                     conn.update(spreadsheet=SHEET_URL, worksheet="posts",
                                                 data=pd.DataFrame(updated_p, columns=["id","category_id","title","content","links","image_urls","created_at"]).astype(str))
-                                    st.session_state.post_db       = updated_p
-                                    st.session_state.force_refresh = True
+                                    st.session_state.post_db         = updated_p
+                                    st.session_state.force_refresh   = True
                                     st.session_state.comm_write_mode = False
                                     st.success("🎉 게시글이 등록되었습니다!")
                                     time.sleep(0.8)
@@ -1172,7 +1138,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
             # ── 게시글 상세 ─────────────────────────────────────────
             elif st.session_state.view_post_id is not None:
-                pid = st.session_state.view_post_id
+                # FIX #4: view_post_id를 clean_id로 정규화해서 비교
+                pid = clean_id(str(st.session_state.view_post_id))
 
                 if st.button("⬅️ 목록으로 돌아가기", key="back_from_detail"):
                     st.session_state.view_post_id = None
@@ -1187,7 +1154,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 if not p_cat.empty:
                     p_cat_row = p_cat.iloc[0]
                     if p_cat_row["parent_id"]:
-                        par = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
+                        par      = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
                         par_name = par["name"].values[0] if not par.empty else ""
                         breadcrumb = f"{par_name} / 📁 {p_cat_row['name']}"
                     else:
@@ -1236,10 +1203,10 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 # 댓글
                 st.markdown("**💬 댓글**")
                 comm_db = st.session_state.comm_db.copy()
-                current_post_id = clean_id(str(pid))
+                # FIX #6: clean_id 한 번만 적용 (로드 시 이미 처리됨)
+                current_post_id = pid  # 이미 위에서 clean_id 처리됨
 
                 if not comm_db.empty:
-                    comm_db["post_id"] = comm_db["post_id"].apply(clean_id)
                     p_comms = comm_db[comm_db["post_id"] == current_post_id]
                 else:
                     p_comms = pd.DataFrame()
@@ -1339,7 +1306,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                                 data=pd.DataFrame(updated_p, columns=["id","category_id","title","content","links","image_urls","created_at"]).astype(str))
                     st.session_state.post_db = updated_p
                     raw = st.session_state.comm_db.copy()
-                    raw["post_id"] = raw["post_id"].apply(clean_id)
                     updated_cm = raw[raw["post_id"] != current_post_id]
                     conn.update(spreadsheet=SHEET_URL, worksheet="comments",
                                 data=pd.DataFrame(updated_cm, columns=["id","post_id","author","content","created_at"]).astype(str))
@@ -1352,7 +1318,6 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
             # ── 게시글 목록 ─────────────────────────────────────────
             else:
-                # 채널 진입 시에만 새 글 작성 버튼 표시
                 if ch_id is not None:
                     if st.button("✏️ 새 글 작성", key="btn_write_main", type="primary"):
                         st.session_state.comm_write_mode = True
@@ -1374,7 +1339,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         if not p_cat.empty:
                             p_cat_row = p_cat.iloc[0]
                             if p_cat_row["parent_id"]:
-                                par = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
+                                par      = st.session_state.cat_db[st.session_state.cat_db["id"] == p_cat_row["parent_id"]]
                                 par_name = par["name"].values[0] if not par.empty else ""
                                 cat_label = f"{par_name} / 📁 {p_cat_row['name']}"
                             else:
@@ -1384,8 +1349,8 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
                         comm_db_tmp = st.session_state.comm_db.copy()
                         if not comm_db_tmp.empty:
-                            comm_db_tmp["post_id"] = comm_db_tmp["post_id"].apply(clean_id)
-                            c_cnt = len(comm_db_tmp[comm_db_tmp["post_id"] == clean_id(str(post["id"]))])
+                            post_id_clean = clean_id(str(post["id"]))
+                            c_cnt = len(comm_db_tmp[comm_db_tmp["post_id"] == post_id_clean])
                         else:
                             c_cnt = 0
 
@@ -1405,6 +1370,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             with col_open:
                                 st.write("")
                                 if st.button("열기 →", key=f"goto_{post['id']}", use_container_width=True):
-                                    st.session_state.view_post_id    = post["id"]
+                                    # FIX #4: 저장 시 clean_id 적용
+                                    st.session_state.view_post_id    = clean_id(str(post["id"]))
                                     st.session_state.comm_write_mode = False
                                     st.rerun()
