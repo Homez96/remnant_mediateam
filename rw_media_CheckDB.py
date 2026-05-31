@@ -473,18 +473,32 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         font-size:0.72rem; font-weight:700; letter-spacing:4px; color:#5a8eb5;
         margin-bottom:6px; border-bottom:2px solid #1e3a5f;
     }
-    /* 이미지 잘림 방지 — 이미지 원본 비율 그대로 표시 */
-    .map-wrap {
-        position:relative; display:block; width:100%;
-        border-radius:8px; overflow:visible;
-        background:#0d1825;
-        line-height:0;
+    /* 이미지 잘림 방지 — JS로 높이 동기화 */
+    .map-outer-wrap {
+        background:#111820; border-radius:14px; padding:10px;
+        box-shadow:0 8px 32px rgba(0,0,0,0.4);
     }
-    .map-wrap img {
+    .map-stage-bar {
+        background:linear-gradient(180deg,#1b2e42 0%,#0d1b2a 100%);
+        border-radius:6px 6px 0 0; text-align:center; padding:7px 0 5px;
+        font-size:0.72rem; font-weight:700; letter-spacing:4px; color:#5a8eb5;
+        margin-bottom:0; border-bottom:2px solid #1e3a5f;
+    }
+    .map-img-container {
+        position:relative; width:100%; line-height:0;
+        border-radius:0 0 8px 8px; overflow:hidden; background:#0d1825;
+    }
+    .map-img-container img {
         display:block; width:100%; height:auto;
-        object-fit:contain;
-        border-radius:8px;
+        border-radius:0 0 8px 8px; user-select:none; -webkit-user-drag:none;
     }
+    .map-img-container.add-cursor { cursor:crosshair; }
+    .map-legend {
+        display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px;
+        background:rgba(255,255,255,0.06); border-radius:8px; margin-top:8px;
+    }
+    .map-legend-item { display:flex; align-items:center; gap:6px; font-size:0.73rem; color:#c0d8ee; font-weight:600; }
+    .map-legend-dot  { width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,0.4); flex-shrink:0; }
 
     /* ── 핀 ── */
     .pin-outer {
@@ -759,9 +773,23 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 )
 
             if st.session_state.pos_add_mode:
-                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 이미지를 클릭하거나 아래 폼에서 좌표를 직접 입력하세요</div>', unsafe_allow_html=True)
+                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 이미지를 직접 클릭해서 핀 위치를 찍으세요!</div>', unsafe_allow_html=True)
 
-            # ── 배치도 이미지 + 핀 오버레이 HTML (클릭 좌표 수집 포함) ──
+            # ── 클릭 좌표 수신 (query_params 방식) ───────────────
+            _qp = st.query_params
+            if st.session_state.pos_add_mode:
+                _qx = _qp.get("pin_x")
+                _qy = _qp.get("pin_y")
+                if _qx is not None and _qy is not None:
+                    try:
+                        st.session_state.pos_click_x = float(_qx)
+                        st.session_state.pos_click_y = float(_qy)
+                        # 좌표 수신 후 query_params 초기화
+                        st.query_params.clear()
+                    except Exception:
+                        pass
+
+            # ── 배치도 이미지 + 핀 오버레이 HTML ─────────────────
             pins      = st.session_state.pos_pins
             active_id = st.session_state.pos_active_pin_id
 
@@ -780,44 +808,79 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     <div class="{label_cls}">{pin['label']}</div>
                 </div>"""
 
-            # 클릭 이벤트 → streamlit query param으로 전달
-            click_js = ""
+            # 클릭 → 부모 페이지 URL의 query param에 좌표 기록 → Streamlit rerun
+            _add_mode_js = ""
             if st.session_state.pos_add_mode:
-                click_js = """
-                document.querySelector('.map-click-area').addEventListener('click', function(e){
-                    var rect = this.getBoundingClientRect();
+                _add_mode_js = """
+                var img = document.getElementById('mapImg');
+                var overlay = document.getElementById('mapContainer');
+                overlay.style.cursor = 'crosshair';
+                overlay.addEventListener('click', function(e){
+                    var rect = img.getBoundingClientRect();
                     var x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
                     var y = ((e.clientY - rect.top)  / rect.height * 100).toFixed(1);
-                    window.parent.postMessage({type:'streamlit:setComponentValue', value:{x:parseFloat(x),y:parseFloat(y)}}, '*');
+                    // 부모 창(Streamlit) URL에 query param 추가 후 강제 이동 → rerun 유발
+                    var url = new URL(window.parent.location.href);
+                    url.searchParams.set('pin_x', x);
+                    url.searchParams.set('pin_y', y);
+                    window.parent.location.href = url.toString();
                 });
                 """
 
-            map_html = f"""
-            <div class="pos-root map-outer">
-                <div class="map-stage">⛪ &nbsp; S T A G E &nbsp; ⛪</div>
-                <div class="map-wrap map-click-area" style="{'cursor:crosshair;' if st.session_state.pos_add_mode else ''}">
-                    <img src="{fixed_img['url']}" alt="{fixed_img['label']}" draggable="false">
-                    {pins_html}
-                </div>
-                <div class="legend">
-                    <div class="legend-item"><div class="legend-dot" style="background:#2563eb;"></div>포지션</div>
-                    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b;"></div>선택됨</div>
-                    <div class="legend-item"><div class="legend-dot" style="background:#16a34a;"></div>배정완료</div>
-                </div>
-            </div>
-            <script>{click_js}</script>"""
+            map_html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@700;900&display=swap');
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{background:#111820;}}
+.map-outer-wrap{{background:#111820;border-radius:14px;padding:10px;}}
+.map-stage-bar{{background:linear-gradient(180deg,#1b2e42,#0d1b2a);border-radius:6px 6px 0 0;
+  text-align:center;padding:7px 0 5px;font-size:0.72rem;font-weight:700;
+  letter-spacing:4px;color:#5a8eb5;border-bottom:2px solid #1e3a5f;
+  font-family:'Noto Sans KR',sans-serif;}}
+.map-img-container{{position:relative;width:100%;line-height:0;border-radius:0 0 8px 8px;overflow:hidden;background:#0d1825;}}
+.map-img-container img{{display:block;width:100%;height:auto;border-radius:0 0 8px 8px;user-select:none;-webkit-user-drag:none;}}
+.pin-outer{{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;z-index:20;pointer-events:none;}}
+.pin-circle{{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:0.62rem;font-weight:900;color:#fff;border:3px solid rgba(255,255,255,0.9);
+  box-shadow:0 0 0 3px rgba(0,0,0,0.5),0 4px 12px rgba(0,0,0,0.6);font-family:'Noto Sans KR',sans-serif;}}
+.pin-circle.idle{{background:linear-gradient(135deg,#2563eb,#1d4ed8);border-color:rgba(255,255,255,0.7);}}
+.pin-circle.active{{background:linear-gradient(135deg,#f59e0b,#d97706);border-color:#fff;}}
+.pin-circle.assigned{{background:linear-gradient(135deg,#16a34a,#15803d);border-color:rgba(255,255,255,0.8);}}
+.pin-needle{{width:4px;height:12px;border-radius:0 0 4px 4px;margin-top:-1px;}}
+.pin-needle.idle{{background:#2563eb;}}.pin-needle.active{{background:#f59e0b;}}.pin-needle.assigned{{background:#16a34a;}}
+.pin-label{{background:rgba(0,0,0,0.88);color:#fff;font-size:0.65rem;font-weight:700;padding:3px 7px;
+  border-radius:5px;white-space:nowrap;margin-top:3px;border:1px solid rgba(255,255,255,0.15);
+  text-shadow:0 1px 3px rgba(0,0,0,0.8);font-family:'Noto Sans KR',sans-serif;}}
+.pin-label.active-label{{background:rgba(245,158,11,0.92);color:#1a0a00;border-color:rgba(255,255,255,0.4);}}
+.map-legend{{display:flex;gap:14px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.06);border-radius:8px;margin-top:8px;}}
+.map-legend-item{{display:flex;align-items:center;gap:6px;font-size:0.73rem;color:#c0d8ee;font-weight:600;font-family:'Noto Sans KR',sans-serif;}}
+.map-legend-dot{{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,0.4);flex-shrink:0;}}
+</style>
+</head><body>
+<div class="map-outer-wrap">
+  <div class="map-stage-bar">⛪ &nbsp; S T A G E &nbsp; ⛪</div>
+  <div class="map-img-container" id="mapContainer">
+    <img id="mapImg" src="{fixed_img['url']}" alt="{fixed_img['label']}" draggable="false">
+    {pins_html}
+  </div>
+  <div class="map-legend">
+    <div class="map-legend-item"><div class="map-legend-dot" style="background:#2563eb;"></div>포지션</div>
+    <div class="map-legend-item"><div class="map-legend-dot" style="background:#f59e0b;"></div>선택됨</div>
+    <div class="map-legend-item"><div class="map-legend-dot" style="background:#16a34a;"></div>배정완료</div>
+  </div>
+</div>
+<script>
+window.addEventListener('load', function(){{
+  {_add_mode_js}
+}});
+</script>
+</body></html>"""
 
-            # 클릭 좌표 수신용 컴포넌트
-            if st.session_state.pos_add_mode:
-                import streamlit.components.v1 as _comp
-                _clicked = _comp.html(map_html, height=520, scrolling=False)
-                # postMessage 결과를 query_params에서 읽는 대신 URL fragment 방식으로 수신
-                # — Streamlit에서 iframe postMessage 수신이 제한적이므로
-                #   대신 이미지 아래 X/Y 슬라이더로 클릭 지점을 시각적으로 미리보기 제공
-                st.caption("💡 이미지를 클릭하면 핀 추가 모드에서 좌표가 아래 폼에 자동 반영됩니다. "
-                           "또는 슬라이더/숫자 입력으로 직접 조정하세요.")
-            else:
-                st.components.v1.html(map_html, height=520, scrolling=False)
+            # iframe 높이를 이미지 비율로 자동 계산 (1920×1080 기준 → 9/16)
+            # 실제로는 컨테이너 너비를 모르므로 여유 있게 고정
+            st.components.v1.html(map_html, height=560, scrolling=False)
 
             # ── 핀 버튼 그리드 (클릭 선택) ───────────────────────
             if pins:
@@ -908,22 +971,37 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             # ── 핀 추가 폼 ───────────────────────────────────────
             if st.session_state.pos_add_mode:
                 st.markdown("---")
-                st.markdown("#### ➕ 새 핀 추가")
 
-                # 기본값: 이전 클릭 좌표 또는 50%
-                _def_x = float(st.session_state.pos_click_x) if st.session_state.pos_click_x is not None else 50.0
-                _def_y = float(st.session_state.pos_click_y) if st.session_state.pos_click_y is not None else 50.0
+                _cx = st.session_state.pos_click_x
+                _cy = st.session_state.pos_click_y
+
+                if _cx is not None and _cy is not None:
+                    st.success(f"📍 클릭 위치 감지됨 — X: **{_cx:.1f}%**, Y: **{_cy:.1f}%**  ↓ 아래 폼에서 포지션 이름 선택 후 등록하세요")
+                else:
+                    st.info("👆 이미지를 클릭하면 해당 위치에 핀이 찍힙니다. 클릭 후 아래에서 포지션 이름을 선택하세요.")
+
+                _def_x = float(_cx) if _cx is not None else 50.0
+                _def_y = float(_cy) if _cy is not None else 50.0
+
+                # 이미 등록된 핀 라벨 제외한 포지션 목록
+                _used_labels = {p["label"] for p in st.session_state.pos_pins}
+                _avail_pos   = [p for p in POSITIONS if p != "선택 안 함" and p not in _used_labels]
+                _pos_opts    = ["-- 포지션 선택 --"] + _avail_pos + ["✏️ 직접 입력"]
 
                 with st.form("add_pin_form", clear_on_submit=True):
-                    af1, af2 = st.columns(2)
-                    p_label  = af1.text_input("포지션 이름 *", placeholder="예) 4번 카메라")
-                    st.caption("📌 X(좌→우), Y(위→아래) 슬라이더로 이미지 위 위치를 설정하세요")
+                    pf1, pf2 = st.columns(2)
+                    _sel_pos  = pf1.selectbox("🎥 포지션 선택 *", _pos_opts)
+                    _custom_p = ""
+                    if _sel_pos == "✏️ 직접 입력":
+                        _custom_p = pf2.text_input("포지션 이름 직접 입력", placeholder="예) 특별 카메라")
+
+                    st.caption(f"📌 핀 위치 — X: {_def_x:.1f}%,  Y: {_def_y:.1f}%  (이미지 클릭으로 변경 가능)")
                     sx1, sx2 = st.columns(2)
-                    p_x = sx1.slider("X 위치 (%)", 0.0, 100.0, _def_x, 0.5, key="pin_x_sl")
-                    p_y = sx2.slider("Y 위치 (%)", 0.0, 100.0, _def_y, 0.5, key="pin_y_sl")
-                    af3, af4 = st.columns(2)
-                    p_desc   = af3.text_area("포지션 설명", placeholder="역할, 장비, 주의사항 등", height=78)
-                    p_img_f  = af4.file_uploader("포지션 사진 (선택)", type=["png","jpg","jpeg"], key="pin_img_up")
+                    p_x = sx1.slider("X 위치 미세 조정 (%)", 0.0, 100.0, _def_x, 0.5, key="pin_x_sl")
+                    p_y = sx2.slider("Y 위치 미세 조정 (%)", 0.0, 100.0, _def_y, 0.5, key="pin_y_sl")
+
+                    p_desc  = st.text_area("포지션 설명 (선택)", placeholder="역할, 장비, 주의사항 등", height=68)
+                    p_img_f = st.file_uploader("포지션 사진 (선택)", type=["png","jpg","jpeg"], key="pin_img_up")
 
                     _ap2 = _all_posts()
                     _post_opts2 = list(_ap2["title"].values) if not _ap2.empty else []
@@ -931,8 +1009,10 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
                     fc1, fc2 = st.columns(2)
                     if fc1.form_submit_button("📌 핀 등록", type="primary", use_container_width=True):
-                        if not p_label.strip():
-                            st.error("포지션 이름을 입력해 주세요.")
+                        _final_label = (_custom_p.strip() if _sel_pos == "✏️ 직접 입력" else
+                                        ("" if _sel_pos == "-- 포지션 선택 --" else _sel_pos))
+                        if not _final_label:
+                            st.error("포지션을 선택하거나 직접 입력해 주세요.")
                         else:
                             _pu = None
                             if p_img_f:
@@ -946,12 +1026,11 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                     _pm = _ap2[_ap2["title"] == _t]
                                     if not _pm.empty: _ids.append(_pm.iloc[0]["id"])
                             new_pin = {
-                                "id": str(int(time.time()*1000)), "label": p_label.strip(),
+                                "id": str(int(time.time()*1000)), "label": _final_label,
                                 "x": p_x, "y": p_y, "desc": p_desc.strip(),
                                 "image_url": _pu, "post_ids": _ids,
                             }
                             st.session_state.pos_pins.append(new_pin)
-                            # 이미지 목록 동기화
                             for img in st.session_state.pos_images:
                                 if img["id"] == fixed_img["id"]:
                                     img["pins"] = st.session_state.pos_pins
@@ -959,7 +1038,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                             st.session_state.pos_add_mode = False
                             st.session_state.pos_click_x  = None
                             st.session_state.pos_click_y  = None
-                            st.success(f"✅ '{p_label.strip()}' 핀 등록 완료!")
+                            st.success(f"✅ '{_final_label}' 핀 등록 완료!")
                             st.rerun()
                     if fc2.form_submit_button("취소", use_container_width=True):
                         st.session_state.pos_add_mode = False
@@ -975,15 +1054,22 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     st.markdown("---")
                     st.markdown(f"#### ✏️ 핀 편집 — {ep['label']}")
                     with st.form(f"edit_pin_{epid}", clear_on_submit=False):
-                        ef1, ef2 = st.columns(2)
-                        e_label  = ef1.text_input("포지션 이름", value=ep["label"])
-                        st.caption("📌 X(좌→우), Y(위→아래) 슬라이더로 위치를 조정하세요")
+                        # 포지션 이름 셀렉트박스 (현재 값 포함)
+                        _ep_pos_opts = ["✏️ 직접 입력"] + [p for p in POSITIONS if p != "선택 안 함"]
+                        _ep_cur_idx  = (_ep_pos_opts.index(ep["label"])
+                                        if ep["label"] in _ep_pos_opts else 0)
+                        e_sel_pos = st.selectbox("🎥 포지션", _ep_pos_opts, index=_ep_cur_idx)
+                        e_custom  = ""
+                        if e_sel_pos == "✏️ 직접 입력":
+                            e_custom = st.text_input("포지션 이름 직접 입력",
+                                                     value=ep["label"] if ep["label"] not in _ep_pos_opts else "")
+
+                        st.caption("📌 슬라이더로 핀 위치를 조정하세요")
                         es1, es2 = st.columns(2)
                         e_x = es1.slider("X (%)", 0.0, 100.0, float(ep["x"]), 0.5, key=f"ex_sl_{epid}")
                         e_y = es2.slider("Y (%)", 0.0, 100.0, float(ep["y"]), 0.5, key=f"ey_sl_{epid}")
-                        ef3, ef4 = st.columns(2)
-                        e_desc   = ef3.text_area("설명", value=ep.get("desc",""), height=78)
-                        e_img_f  = ef4.file_uploader("사진 변경", type=["png","jpg","jpeg"], key=f"epin_{epid}")
+                        e_desc   = st.text_area("설명", value=ep.get("desc",""), height=68)
+                        e_img_f  = st.file_uploader("사진 변경", type=["png","jpg","jpeg"], key=f"epin_{epid}")
 
                         _eap = _all_posts()
                         _ep_opts = list(_eap["title"].values) if not _eap.empty else []
@@ -996,23 +1082,27 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
                         ec1, ec2 = st.columns(2)
                         if ec1.form_submit_button("💾 저장", type="primary", use_container_width=True):
-                            _nu = ep.get("image_url")
-                            if e_img_f:
-                                _nu = upload_image_to_storage(e_img_f)
-                                if not _nu:
-                                    import base64 as _b64
-                                    _nu = f"data:image/{e_img_f.name.rsplit('.',1)[-1].lower()};base64," + _b64.b64encode(e_img_f.getvalue()).decode()
-                            _nids = []
-                            if not _eap.empty:
-                                for _t2 in e_posts:
-                                    _pm3 = _eap[_eap["title"] == _t2]
-                                    if not _pm3.empty: _nids.append(_pm3.iloc[0]["id"])
-                            _save_pin({**ep, "label": e_label.strip(), "x": e_x, "y": e_y,
-                                       "desc": e_desc.strip(), "image_url": _nu, "post_ids": _nids})
-                            st.session_state.pos_edit_pin_id   = None
-                            st.session_state.pos_active_pin_id = None
-                            st.success("저장 완료!")
-                            st.rerun()
+                            _e_final = (e_custom.strip() if e_sel_pos == "✏️ 직접 입력" else e_sel_pos)
+                            if not _e_final:
+                                st.error("포지션 이름을 입력해 주세요.")
+                            else:
+                                _nu = ep.get("image_url")
+                                if e_img_f:
+                                    _nu = upload_image_to_storage(e_img_f)
+                                    if not _nu:
+                                        import base64 as _b64
+                                        _nu = f"data:image/{e_img_f.name.rsplit('.',1)[-1].lower()};base64," + _b64.b64encode(e_img_f.getvalue()).decode()
+                                _nids = []
+                                if not _eap.empty:
+                                    for _t2 in e_posts:
+                                        _pm3 = _eap[_eap["title"] == _t2]
+                                        if not _pm3.empty: _nids.append(_pm3.iloc[0]["id"])
+                                _save_pin({**ep, "label": _e_final, "x": e_x, "y": e_y,
+                                           "desc": e_desc.strip(), "image_url": _nu, "post_ids": _nids})
+                                st.session_state.pos_edit_pin_id   = None
+                                st.session_state.pos_active_pin_id = None
+                                st.success("저장 완료!")
+                                st.rerun()
                         if ec2.form_submit_button("취소", use_container_width=True):
                             st.session_state.pos_edit_pin_id = None
                             st.rerun()
