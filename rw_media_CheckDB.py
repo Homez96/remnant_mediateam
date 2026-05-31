@@ -460,47 +460,49 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
+    # 포지션 순서 정의
+    POSITION_ORDER = ["PD", "TD", "자막", "LED", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "1~3번 카메라", "노출", "조명", "음향", "FD", "릴스", "사진"]
+
     try:
-        # 1. 이미지 로드 (캐시된 함수 호출)
+        # 1. 이미지 로드 (캐시 사용)
         pos_img = get_position_image()
         
-        col_main, col_list = st.columns([3, 1])
+        col_main, col_list = st.columns([3, 2])
         
         with col_main:
-            st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
+            st.write("이미지를 클릭하여 위치를 선택하세요.")
             
-            # 2. 이미지 렌더링 (파라미터 수정)
+            # 이미지 렌더링
             val = streamlit_image_coordinates(
                 pos_img, 
                 key="map_click",
                 use_column_width=True
             )
             
+            # 클릭 좌표 임시 저장 (좌표 텍스트는 보여주지 않음)
             if val:
-                st.session_state.pos_click_x = val["x"]
-                st.session_state.pos_click_y = val["y"]
-                st.success(f"좌표 획득: {val['x']}, {val['y']}")
+                st.session_state.temp_x, st.session_state.temp_y = val["x"], val["y"]
 
-            # 3. 핀 추가 폼
+            # 핀 등록 폼
             with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
                 with st.form("pin_add_form", clear_on_submit=True):
-                    pin_name = st.text_input("핀 위치 이름")
-                    assignee = st.selectbox("담당 포지션", POSITIONS)
-                    submitted = st.form_submit_button("배치 저장")
+                    pin_name = st.text_input("위치 명칭 (예: 메인콘솔)")
+                    assignee = st.selectbox("포지션 선택", POSITION_ORDER)
+                    submitted = st.form_submit_button("현재 위치에 배치 저장")
                     
                     if submitted:
-                        if st.session_state.pos_click_x is None:
-                            st.warning("먼저 이미지를 클릭하세요!")
+                        if st.session_state.temp_x is None:
+                            st.warning("먼저 이미지를 클릭하여 위치를 선택하세요!")
                         elif not pin_name:
-                            st.warning("이름을 입력하세요!")
+                            st.warning("위치 명칭을 입력하세요!")
                         else:
                             st.session_state.pos_assignments.append({
-                                "x": st.session_state.pos_click_x,
-                                "y": st.session_state.pos_click_y,
-                                "label": pin_name,
+                                "x": st.session_state.temp_x, 
+                                "y": st.session_state.temp_y,
+                                "label": pin_name, 
                                 "position": assignee
                             })
-                            st.session_state.pos_click_x = None
+                            st.session_state.temp_x = None
                             st.rerun()
 
         with col_list:
@@ -508,15 +510,40 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             if not st.session_state.pos_assignments:
                 st.info("배정된 핀이 없습니다.")
             else:
+                # 인터파크 예매 스타일 리스트
                 for idx, pin in enumerate(st.session_state.pos_assignments):
-                    st.write(f"**{pin['label']}** ({pin['position']})")
+                    # 버튼 클릭 시 해당 위치 정보 확인 (실시간 피드백)
+                    if st.button(f"📍 {pin['position']} : {pin['label']}", key=f"btn_{idx}"):
+                        st.toast(f"{pin['label']} 위치: ({pin['x']}, {pin['y']})")
+                    
                     if st.button("삭제", key=f"del_{idx}"):
                         st.session_state.pos_assignments.pop(idx)
                         st.rerun()
 
+        # 결과 출력 섹션
+        st.markdown("---")
+        if st.button("예배 배치 결과 생성"):
+            st.subheader("📋 배치 결과 (복사용)")
+            
+            # 순서대로 정렬 (POSITION_ORDER 기준)
+            def get_sort_key(item):
+                try:
+                    return POSITION_ORDER.index(item['position'])
+                except ValueError:
+                    return 99
+
+            sorted_list = sorted(st.session_state.pos_assignments, key=get_sort_key)
+            
+            result_text = ""
+            for p in sorted_list:
+                result_text += f"{p['position']}: {p['label']}\n"
+            
+            st.code(result_text, language=None)
+            st.info("위 내용을 복사하여 사용하세요.")
+
     except Exception as e:
-        # 이 부분이 반드시 있어야 문법 오류가 사라집니다.
         st.error(f"이미지 로드 중 오류가 발생했습니다: {e}")
+        
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
