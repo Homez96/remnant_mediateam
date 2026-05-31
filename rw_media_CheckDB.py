@@ -442,55 +442,70 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.force_refresh = True
                         st.rerun()
 
-
 # ══════════════════════════════════════════════════════════════════════
-# 7. 포지션 배치 관리 — 인터파크 스타일 핀 맵 + 우측 배정 패널
+# 7. 포지션 배치 관리 (수정본)
 # ══════════════════════════════════════════════════════════════════════
-
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
-    
-    # 핀 추가 모드와 좌표 상태 초기화
-    if 'pos_add_mode' not in st.session_state: st.session_state.pos_add_mode = False
-    if 'pos_click_x' not in st.session_state: st.session_state.pos_click_x = None
 
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("📍 핀 추가 모드 전환"):
-            st.session_state.pos_add_mode = not st.session_state.pos_add_mode
-            st.rerun()
-    
-    # 여기서 'pos_fixed_image'는 기존에 이미지를 저장하는 변수명입니다. 
-    # 본인 코드의 변수명과 일치하는지 확인하세요!
-    fixed_img = st.session_state.get('pos_fixed_image') 
+    # 레이아웃 구성: 왼쪽(맵), 오른쪽(배정 목록)
+    col_main, col_list = st.columns([3, 1])
 
-    if fixed_img is None:
-        st.info("배치도 이미지가 없습니다.")
-    else:
-        st.write("이미지를 클릭하여 위치를 선택하세요.")
-        
-        # 이미지 출력 및 클릭 좌표 획득
-        value = streamlit_image_coordinates(
-            fixed_img['url'], 
-            key="map_click",
-            use_container_width=True
-        )
+    with col_main:
+        # 1. 이미지 업로드 (1920x1080 권장 안내)
+        uploaded_file = st.file_uploader("배치도 이미지 업로드 (1920x1080 권장)", type=["png", "jpg", "jpeg"])
+        if uploaded_file:
+            # 임시로 이미지 URL 생성 (실제 배포 시엔 ImgBB 업로드 로직 사용)
+            st.session_state.pos_fixed_image = {"url": uploaded_file}
 
-        if value and st.session_state.pos_add_mode:
-            st.session_state.pos_click_x = value["x"]
-            st.session_state.pos_click_y = value["y"]
-            st.rerun()
+        if st.session_state.pos_fixed_image:
+            st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
+            
+            # 이미지 출력 및 클릭 좌표 획득
+            value = streamlit_image_coordinates(
+                st.session_state.pos_fixed_image['url'],
+                key="map_click",
+                use_container_width=True
+            )
 
-    # 좌표가 획득되었을 때 폼 노출
-    if st.session_state.pos_click_x is not None:
-        with st.form("pin_save_form"):
-            st.write(f"좌표: {st.session_state.pos_click_x}, {st.session_state.pos_click_y}")
-            pin_name = st.text_input("핀 이름 입력")
-            if st.form_submit_button("저장"):
-                st.success(f"📍 {pin_name} 저장 완료!")
-                st.session_state.pos_click_x = None
-                st.session_state.pos_add_mode = False
-                st.rerun()
+            # 2. 클릭 위치 핀 설정 모드
+            if value:
+                st.session_state.pos_click_x = value["x"]
+                st.session_state.pos_click_y = value["y"]
+                
+                # 3. 핀 설정 폼 (이미지 아래 즉시 팝업)
+                with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+                    with st.form("pin_add_form"):
+                        pin_name = st.text_input("핀 위치 이름 (예: 메인 카메라)")
+                        assignee = st.selectbox("담당 포지션", POSITIONS)
+                        
+                        if st.form_submit_button("배치 저장"):
+                            new_pin = {
+                                "x": st.session_state.pos_click_x,
+                                "y": st.session_state.pos_click_y,
+                                "label": pin_name,
+                                "position": assignee
+                            }
+                            st.session_state.pos_assignments.append(new_pin)
+                            st.success(f"{pin_name}에 {assignee} 배정 완료!")
+                            st.rerun()
+
+    with col_list:
+        # 4. 인터파크 예매 목록 스타일
+        st.markdown("### 📋 현재 배치 현황")
+        if not st.session_state.pos_assignments:
+            st.info("배정된 인원이 없습니다.")
+        else:
+            for idx, pin in enumerate(st.session_state.pos_assignments):
+                st.markdown(f"""
+                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:5px;'>
+                    <strong>{pin['label']}</strong><br>
+                    📍 {pin['position']}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("삭제", key=f"del_pin_{idx}"):
+                    st.session_state.pos_assignments.pop(idx)
+                    st.rerun()
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
