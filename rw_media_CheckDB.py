@@ -773,21 +773,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 )
 
             if st.session_state.pos_add_mode:
-                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 이미지를 직접 클릭해서 핀 위치를 찍으세요!</div>', unsafe_allow_html=True)
-
-            # ── 클릭 좌표 수신 (query_params 방식) ───────────────
-            _qp = st.query_params
-            if st.session_state.pos_add_mode:
-                _qx = _qp.get("pin_x")
-                _qy = _qp.get("pin_y")
-                if _qx is not None and _qy is not None:
-                    try:
-                        st.session_state.pos_click_x = float(_qx)
-                        st.session_state.pos_click_y = float(_qy)
-                        # 좌표 수신 후 query_params 초기화
-                        st.query_params.clear()
-                    except Exception:
-                        pass
+                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 이미지를 클릭하면 해당 위치에 핀이 찍힙니다!</div>', unsafe_allow_html=True)
 
             # ── 배치도 이미지 + 핀 오버레이 HTML ─────────────────
             pins      = st.session_state.pos_pins
@@ -802,30 +788,16 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 outer_extra = "transform:translate(-50%,-100%) scale(1.35); z-index:30;" if is_active else ""
                 label_cls   = "pin-label active-label" if is_active else "pin-label"
                 pins_html += f"""
-                <div class="pin-outer" style="left:{pin['x']}%;top:{pin['y']}%;{outer_extra}">
+                <div class="pin-outer" style="left:{pin['x']}%;top:{pin['y']}%;"
+                     data-active="{'true' if is_active else 'false'}"
+                     data-extra="{outer_extra}">
                     <div class="pin-circle {cls}">{short}</div>
                     <div class="pin-needle {cls}"></div>
                     <div class="{label_cls}">{pin['label']}</div>
                 </div>"""
 
-            # 클릭 → 부모 페이지 URL의 query param에 좌표 기록 → Streamlit rerun
-            _add_mode_js = ""
-            if st.session_state.pos_add_mode:
-                _add_mode_js = """
-                var img = document.getElementById('mapImg');
-                var overlay = document.getElementById('mapContainer');
-                overlay.style.cursor = 'crosshair';
-                overlay.addEventListener('click', function(e){
-                    var rect = img.getBoundingClientRect();
-                    var x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
-                    var y = ((e.clientY - rect.top)  / rect.height * 100).toFixed(1);
-                    // 부모 창(Streamlit) URL에 query param 추가 후 강제 이동 → rerun 유발
-                    var url = new URL(window.parent.location.href);
-                    url.searchParams.set('pin_x', x);
-                    url.searchParams.set('pin_y', y);
-                    window.parent.location.href = url.toString();
-                });
-                """
+            # add_mode 여부를 JS에서 알 수 있게 플래그 전달
+            _add_flag = "true" if st.session_state.pos_add_mode else "false"
 
             map_html = f"""<!DOCTYPE html>
 <html><head>
@@ -833,15 +805,18 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@700;900&display=swap');
 *{{box-sizing:border-box;margin:0;padding:0;}}
-body{{background:#111820;}}
+body{{background:#111820;overflow:hidden;}}
 .map-outer-wrap{{background:#111820;border-radius:14px;padding:10px;}}
 .map-stage-bar{{background:linear-gradient(180deg,#1b2e42,#0d1b2a);border-radius:6px 6px 0 0;
   text-align:center;padding:7px 0 5px;font-size:0.72rem;font-weight:700;
   letter-spacing:4px;color:#5a8eb5;border-bottom:2px solid #1e3a5f;
   font-family:'Noto Sans KR',sans-serif;}}
-.map-img-container{{position:relative;width:100%;line-height:0;border-radius:0 0 8px 8px;overflow:hidden;background:#0d1825;}}
-.map-img-container img{{display:block;width:100%;height:auto;border-radius:0 0 8px 8px;user-select:none;-webkit-user-drag:none;}}
-.pin-outer{{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;z-index:20;pointer-events:none;}}
+.map-img-container{{position:relative;width:100%;line-height:0;border-radius:0 0 8px 8px;background:#0d1825;}}
+.map-img-container img{{display:block;width:100%;height:auto;border-radius:0 0 8px 8px;
+  user-select:none;-webkit-user-drag:none;}}
+.map-img-container.click-mode{{cursor:crosshair;}}
+.pin-outer{{position:absolute;transform:translate(-50%,-100%);
+  display:flex;flex-direction:column;align-items:center;z-index:20;pointer-events:none;}}
 .pin-circle{{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   font-size:0.62rem;font-weight:900;color:#fff;border:3px solid rgba(255,255,255,0.9);
   box-shadow:0 0 0 3px rgba(0,0,0,0.5),0 4px 12px rgba(0,0,0,0.6);font-family:'Noto Sans KR',sans-serif;}}
@@ -854,16 +829,44 @@ body{{background:#111820;}}
   border-radius:5px;white-space:nowrap;margin-top:3px;border:1px solid rgba(255,255,255,0.15);
   text-shadow:0 1px 3px rgba(0,0,0,0.8);font-family:'Noto Sans KR',sans-serif;}}
 .pin-label.active-label{{background:rgba(245,158,11,0.92);color:#1a0a00;border-color:rgba(255,255,255,0.4);}}
-.map-legend{{display:flex;gap:14px;flex-wrap:wrap;padding:8px 12px;background:rgba(255,255,255,0.06);border-radius:8px;margin-top:8px;}}
-.map-legend-item{{display:flex;align-items:center;gap:6px;font-size:0.73rem;color:#c0d8ee;font-weight:600;font-family:'Noto Sans KR',sans-serif;}}
-.map-legend-dot{{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,0.4);flex-shrink:0;}}
+.map-legend{{display:flex;gap:14px;flex-wrap:wrap;padding:8px 12px;
+  background:rgba(255,255,255,0.06);border-radius:8px;margin-top:8px;}}
+.map-legend-item{{display:flex;align-items:center;gap:6px;font-size:0.73rem;
+  color:#c0d8ee;font-weight:600;font-family:'Noto Sans KR',sans-serif;}}
+.map-legend-dot{{width:14px;height:14px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.4);flex-shrink:0;}}
+/* 클릭 미리보기 핀 */
+#preview-pin{{
+  position:absolute;pointer-events:none;z-index:50;
+  display:none;transform:translate(-50%,-100%);
+  display:flex;flex-direction:column;align-items:center;
+}}
+#preview-circle{{
+  width:34px;height:34px;border-radius:50%;
+  background:rgba(239,68,68,0.9);border:3px solid #fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:1rem;
+  box-shadow:0 0 0 4px rgba(239,68,68,0.4),0 4px 12px rgba(0,0,0,0.6);
+  animation:blink 0.8s ease-in-out infinite;
+}}
+@keyframes blink{{0%,100%{{opacity:1;}}50%{{opacity:0.5;}}}}
+#preview-needle{{width:4px;height:10px;background:#ef4444;border-radius:0 0 4px 4px;margin-top:-1px;}}
+#preview-label{{background:rgba(239,68,68,0.92);color:#fff;font-size:0.65rem;font-weight:700;
+  padding:2px 7px;border-radius:5px;white-space:nowrap;margin-top:2px;
+  font-family:'Noto Sans KR',sans-serif;}}
 </style>
 </head><body>
 <div class="map-outer-wrap">
   <div class="map-stage-bar">⛪ &nbsp; S T A G E &nbsp; ⛪</div>
-  <div class="map-img-container" id="mapContainer">
-    <img id="mapImg" src="{fixed_img['url']}" alt="{fixed_img['label']}" draggable="false">
+  <div class="map-img-container{'  click-mode' if st.session_state.pos_add_mode else ''}" id="mapContainer">
+    <img id="mapImg" src="{fixed_img['url']}" alt="" draggable="false"
+         onload="onImgLoad()">
     {pins_html}
+    <div id="preview-pin" style="display:none;">
+      <div id="preview-circle">📍</div>
+      <div id="preview-needle"></div>
+      <div id="preview-label">여기에 핀</div>
+    </div>
   </div>
   <div class="map-legend">
     <div class="map-legend-item"><div class="map-legend-dot" style="background:#2563eb;"></div>포지션</div>
@@ -872,15 +875,77 @@ body{{background:#111820;}}
   </div>
 </div>
 <script>
-window.addEventListener('load', function(){{
-  {_add_mode_js}
-}});
+var ADD_MODE = {_add_flag};
+var container = document.getElementById('mapContainer');
+var previewPin = document.getElementById('preview-pin');
+
+function onImgLoad() {{
+  // 이미지 로드 후 iframe 높이를 이미지 실제 높이에 맞게 조정
+  var img = document.getElementById('mapImg');
+  var totalH = img.offsetHeight + 80; // 여백 포함
+  window.parent.postMessage({{type:'streamlit:setFrameHeight', height: totalH}}, '*');
+}}
+
+if (ADD_MODE) {{
+  // 마우스 이동 → 미리보기 핀 위치 업데이트
+  container.addEventListener('mousemove', function(e) {{
+    var img = document.getElementById('mapImg');
+    var rect = img.getBoundingClientRect();
+    var x = e.clientX - rect.left;
+    var y = e.clientY - rect.top;
+    if (x >= 0 && y >= 0 && x <= rect.width && y <= rect.height) {{
+      previewPin.style.display = 'flex';
+      previewPin.style.left = (x / rect.width * 100) + '%';
+      previewPin.style.top  = (y / rect.height * 100) + '%';
+    }}
+  }});
+
+  container.addEventListener('mouseleave', function() {{
+    previewPin.style.display = 'none';
+  }});
+
+  // 클릭 → Streamlit에 좌표 전송 (Streamlit custom component 방식)
+  container.addEventListener('click', function(e) {{
+    var img = document.getElementById('mapImg');
+    var rect = img.getBoundingClientRect();
+    var xPct = parseFloat(((e.clientX - rect.left) / rect.width * 100).toFixed(1));
+    var yPct = parseFloat(((e.clientY - rect.top)  / rect.height * 100).toFixed(1));
+    // Streamlit bidirectional component value 전송
+    window.parent.postMessage({{
+      type: 'streamlit:setComponentValue',
+      value: {{pin_x: xPct, pin_y: yPct}}
+    }}, '*');
+  }});
+}}
 </script>
 </body></html>"""
 
-            # iframe 높이를 이미지 비율로 자동 계산 (1920×1080 기준 → 9/16)
-            # 실제로는 컨테이너 너비를 모르므로 여유 있게 고정
-            st.components.v1.html(map_html, height=560, scrolling=False)
+            # ── 커스텀 컴포넌트로 클릭 좌표 수신 ────────────────
+            import streamlit.components.v1 as _cv1
+            import os as _os, tempfile as _tf
+
+            # declare_component로 등록하면 return value를 받을 수 있음
+            _comp_dir  = _os.path.join(_tf.gettempdir(), "rw_pin_comp")
+            _os.makedirs(_comp_dir, exist_ok=True)
+            _html_path = _os.path.join(_comp_dir, "index.html")
+            with open(_html_path, "w", encoding="utf-8") as _f:
+                _f.write(map_html)
+
+            _pin_comp = _cv1.declare_component("pin_map", path=_comp_dir)
+            _comp_val = _pin_comp(key=f"pinmap_{fixed_img['id']}_{st.session_state.pos_add_mode}")
+
+            # 클릭 좌표 수신 처리
+            if _comp_val is not None and st.session_state.pos_add_mode:
+                try:
+                    _rx = float(_comp_val.get("pin_x", 50))
+                    _ry = float(_comp_val.get("pin_y", 50))
+                    if (st.session_state.pos_click_x != _rx or
+                            st.session_state.pos_click_y != _ry):
+                        st.session_state.pos_click_x = _rx
+                        st.session_state.pos_click_y = _ry
+                        st.rerun()
+                except Exception:
+                    pass
 
             # ── 핀 버튼 그리드 (클릭 선택) ───────────────────────
             if pins:
