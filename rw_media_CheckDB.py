@@ -450,7 +450,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
     if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
         try:
             # assets 폴더 안의 이미지 경로 (실제 파일명이 .png 인지 .jpg 인지 확인하세요)
-            st.session_state.pos_fixed_image = Image.open("assets/OryunMainHall.jpg") 
+            st.session_state.pos_fixed_image = Image.open("assets/OryunMainHall.png") 
         except Exception as e:
             st.error(f"이미지를 불러올 수 없습니다: {e}")
 
