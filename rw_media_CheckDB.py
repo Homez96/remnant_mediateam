@@ -461,53 +461,49 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
     POSITION_ORDER = ["PD", "TD", "자막", "LED", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "1~3번 카메라", "노출", "조명", "음향", "FD", "릴스", "사진"]
+    
+    # 멤버 데이터 불러오기 (rw_media_CheckDB.py의 st.session_state.members 기준)
+    if 'members' in st.session_state and isinstance(st.session_state.members, pd.DataFrame):
+        PEOPLE_LIST = sorted(st.session_state.members['이름'].unique().tolist())
+    else:
+        PEOPLE_LIST = ["멤버 데이터 없음"]
 
     try:
-        # 이미지 로드
         pos_img = get_position_image()
         col_main, col_list = st.columns([3, 2])
         
         with col_main:
-            st.write("이미지를 클릭하여 위치를 선택하세요.")
-            
-            # 핀 아이콘 그리기 (Markers 파라미터 대신 직접 그리기)
+            # 핀 그리기 (좌표 오차 방지: 원본 이미지 복사본에 직접 그림)
             display_img = pos_img.copy()
             if st.session_state.get("pos_highlight"):
                 h = st.session_state.pos_highlight
                 draw = ImageDraw.Draw(display_img)
                 x, y = h["x"], h["y"]
-                r = 15 # 핀 크기
-                
-                # 핀 머리 (원)
+                r = 15
                 draw.ellipse((x-r, y-2*r, x+r, y), fill="red", outline="white", width=2)
-                # 핀 몸통 (역삼각형)
                 draw.polygon([(x-r, y-r), (x+r, y-r), (x, y+r)], fill="red", outline="white")
-                # 핀 가운데 점
-                draw.ellipse((x-3, y-r-3, x+3, y-r+3), fill="white")
 
-            # 핀 그리기 완료된 이미지를 렌더링 (markers 파라미터 제거)
-            val = streamlit_image_coordinates(
-                display_img, key="map_click", use_column_width=True
-            )
+            # [좌표 오차 보정] 너비를 800으로 고정하여 브라우저 리사이징에 의한 오차 제거
+            val = streamlit_image_coordinates(display_img, key="map_click", width=800) 
             
             if val:
                 st.session_state.temp_x, st.session_state.temp_y = val["x"], val["y"]
-                st.session_state.pos_highlight = None # 클릭 시 마커 초기화
+                st.session_state.pos_highlight = None
 
-            # 핀 등록 폼
-            with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+            with st.expander("📌 선택 위치에 배치하기", expanded=True):
                 with st.form("pin_add_form", clear_on_submit=True):
-                    pin_name = st.text_input("위치 명칭")
-                    assignee = st.selectbox("포지션 선택", POSITION_ORDER)
-                    if st.form_submit_button("현재 위치에 배치 저장"):
+                    # [입력 폼 순서 변경] 담당자 -> 포지션 -> 위치 명칭
+                    assignee_name = st.selectbox("담당자 (멤버 목록)", PEOPLE_LIST)
+                    position_type = st.selectbox("포지션 선택", POSITION_ORDER)
+                    pin_name = st.text_input("위치 상세 명칭")
+                    
+                    if st.form_submit_button("배치 저장"):
                         if st.session_state.temp_x is None:
-                            st.warning("먼저 이미지를 클릭하세요!")
-                        elif not pin_name:
-                            st.warning("위치 명칭을 입력하세요!")
+                            st.warning("이미지를 먼저 클릭하세요!")
                         else:
                             st.session_state.pos_assignments.append({
                                 "x": st.session_state.temp_x, "y": st.session_state.temp_y,
-                                "label": pin_name, "position": assignee
+                                "label": pin_name, "position": position_type, "name": assignee_name
                             })
                             st.session_state.temp_x = None
                             st.rerun()
@@ -516,22 +512,16 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.markdown("### 📋 현재 배치 현황")
             for idx, pin in enumerate(st.session_state.pos_assignments):
                 col_btn, col_del = st.columns([4, 1])
-                # 클릭 시 마커 표시
-                if col_btn.button(f"📍 {pin['position']} : {pin['label']}", key=f"btn_{idx}"):
+                if col_btn.button(f"📍 {pin['name']} ({pin['position']})", key=f"btn_{idx}"):
                     st.session_state.pos_highlight = {"x": pin["x"], "y": pin["y"]}
                     st.rerun()
-                # 삭제 버튼
                 if col_del.button("🗑️", key=f"del_{idx}"):
                     st.session_state.pos_assignments.pop(idx)
-                    if st.session_state.pos_highlight == {"x": pin["x"], "y": pin["y"]}:
-                        st.session_state.pos_highlight = None
                     st.rerun()
 
-        st.markdown("---")
         if st.button("예배 배치 결과 생성"):
-            sorted_list = sorted(st.session_state.pos_assignments, 
-                                 key=lambda x: POSITION_ORDER.index(x['position']) if x['position'] in POSITION_ORDER else 99)
-            result_text = "\n".join([f"{p['position']}: {p['label']}" for p in sorted_list])
+            sorted_list = sorted(st.session_state.pos_assignments, key=lambda x: POSITION_ORDER.index(x['position']))
+            result_text = "\n".join([f"{p['position']}: {p['name']} ({p['label']})" for p in sorted_list])
             st.code(result_text, language=None)
 
     except Exception as e:
