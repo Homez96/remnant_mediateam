@@ -450,23 +450,29 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 elif st.session_state.page == "🎬 포지션 배치 관리":
         st.subheader("🎬 포지션 배치 관리")
         
-        # 이미지 로드 로직 (파일 경로 사용)
-        image_path = "assets/OryunMainHall.png"
+        # 1. 파일 경로 설정
+        img_path = "assets/OryunMainHall.png"
         
-        # 1. 라이브러리가 안정적으로 읽을 수 있도록 파일 객체 그대로 전달 시도
-        # 만약 이것도 에러가 나면, 이미지 파일을 직접 경로로 넘기도록 합니다.
-        if 'pos_fixed_image' not in st.session_state:
-            st.session_state.pos_fixed_image = image_path
+        # 2. 이미지 객체 로드 (세션 저장)
+        if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
+            try:
+                # 파일을 열어 RGB 이미지 객체로 변환하여 보관
+                img = Image.open(img_path).convert('RGB')
+                st.session_state.pos_fixed_image = img
+            except Exception as e:
+                st.error(f"이미지 로드 실패: {e}")
+                st.stop() # 에러 발생 시 앱 중단
+
+        fixed_img = st.session_state.pos_fixed_image
 
         col_main, col_list = st.columns([3, 1])
         
         with col_main:
-            st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
+            st.write("이미지를 클릭하여 핀을 배치하세요.")
             
-            # 2. 이미지 파일 경로(문자열)를 직접 전달
-            # 많은 경우 PIL 객체보다 경로 문자열이 더 안정적입니다.
+            # 3. 라이브러리 실행 (이미 객체화된 fixed_img 전달)
             value = streamlit_image_coordinates(
-                image_path, 
+                fixed_img, 
                 key="map_click",
                 use_container_width=True
             )
@@ -479,17 +485,17 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     with st.form("pin_add_form"):
                         pin_name = st.text_input("핀 위치 이름")
                         assignee = st.selectbox("담당 포지션", POSITIONS)
-                        
                         if st.form_submit_button("배치 저장"):
-                            new_pin = {
+                            st.session_state.pos_assignments.append({
                                 "x": st.session_state.pos_click_x,
                                 "y": st.session_state.pos_click_y,
                                 "label": pin_name,
                                 "position": assignee
-                            }
-                            st.session_state.pos_assignments.append(new_pin)
+                            })
                             st.session_state.pos_click_x = None
                             st.rerun()
+
+        # 우측 리스트... (기존과 동일)
 
         with col_list:
             st.markdown("### 📋 현재 배치 현황")
