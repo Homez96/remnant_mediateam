@@ -84,6 +84,7 @@ _defaults = {
     "pos_highlight":     None,   # 하이라이트할 핀 (rx, ry) 튜플
     "pos_result_text":   "",     # 결과 생성 텍스트 (rerun 후에도 유지)
     "pos_members_tried": False,  # 포지션 탭 멤버 로드 1회 시도 플래그
+    "pos_click_seq":     0,      # 이미지 위젯 key 순번 (저장 후 캐시 초기화용)
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -469,37 +470,46 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
     POSITION_ORDER = ["PD", "TD", "자막", "LED", "4번 카메라", "5번 카메라", "6번 카메라",
                       "7번 카메라", "1~3번 카메라", "노출", "조명", "음향", "FD", "릴스", "사진"]
+    # 결과 출력 시 두 그룹 사이 빈 줄 구분 (인덱스 기준)
+    RESULT_GROUP_BREAK_AFTER = 8  # "1~3번 카메라" 다음에 빈 줄
 
-    # 포지션별 고유 색상 팔레트 (핀 구분용)
     POSITION_COLORS = {
-        "PD":       "#e74c3c",  # 진빨강
-        "TD":       "#e67e22",  # 주황
-        "자막":     "#f1c40f",  # 노랑
-        "LED":      "#2ecc71",  # 초록
-        "4번 카메라": "#1abc9c", # 청록
-        "5번 카메라": "#3498db", # 파랑
-        "6번 카메라": "#2980b9", # 진파랑
-        "7번 카메라": "#9b59b6", # 보라
-        "1~3번 카메라": "#8e44ad",# 진보라
-        "노출":     "#e91e8c",  # 핑크
-        "조명":     "#ff9800",  # 황금
-        "음향":     "#00bcd4",  # 하늘
-        "FD":       "#795548",  # 갈색
-        "릴스":     "#607d8b",  # 슬레이트
-        "사진":     "#4caf50",  # 연두
+        "PD":           "#e74c3c",
+        "TD":           "#e67e22",
+        "자막":         "#f1c40f",
+        "LED":          "#2ecc71",
+        "4번 카메라":   "#1abc9c",
+        "5번 카메라":   "#3498db",
+        "6번 카메라":   "#2980b9",
+        "7번 카메라":   "#9b59b6",
+        "1~3번 카메라": "#8e44ad",
+        "노출":         "#e91e8c",
+        "조명":         "#ff9800",
+        "음향":         "#00bcd4",
+        "FD":           "#795548",
+        "릴스":         "#607d8b",
+        "사진":         "#4caf50",
     }
     DEFAULT_PIN_COLOR = "#95a5a6"
 
-    # ── BUG FIX 1: 최초 1회만 로드, 실패해도 무한 재시도 방지 ──────────
-    # members_loaded가 False이고 아직 시도하지 않은 경우에만 1회 로드
+    # 최초 1회만 로드
     if not st.session_state.members_loaded and not st.session_state.get("pos_members_tried"):
         st.session_state.pos_members_tried = True
         with st.spinner("⏳ 멤버 목록 불러오는 중..."):
             load_members_only()
 
-    # 멤버 명단 (members_db 기준)
     _mdb = st.session_state.members_db
     member_options = ["미배정"] + list(_mdb["name"].values) if not _mdb.empty else ["미배정"]
+
+    # ── 날짜 선택 (상단 배치) ─────────────────────────────────────────
+    d_col, _ = st.columns([2, 3])
+    with d_col:
+        pos_date = st.date_input(
+            "📅 예배 날짜",
+            value=st.session_state.pos_assign_date,
+            key="pos_date_input",
+        )
+        st.session_state.pos_assign_date = pos_date
 
     try:
         pos_img = get_position_image()
@@ -532,16 +542,16 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 draw_pin(draw_obj, st.session_state.temp_rx, st.session_state.temp_ry,
                          color="#0a74da", r=PIN_R + 3, outline_w=4)
 
-            val = streamlit_image_coordinates(display_img, key="map_click", width=DISPLAY_W)
+            # ── FIX: 저장 직후 위젯 key를 바꿔 캐시된 클릭값 완전 초기화 ──
+            # pos_click_seq는 저장할 때마다 +1 → 다른 key → 위젯이 fresh 상태로 재생성됨
+            click_key = f"map_click_{st.session_state.get('pos_click_seq', 0)}"
+            val = streamlit_image_coordinates(display_img, key=click_key, width=DISPLAY_W)
 
-            # ── BUG FIX 2: 폼 제출 중 클릭값이 temp_rx를 덮어쓰는 문제 방지 ──
-            # val이 들어왔을 때 이미 pending 상태(temp_rx 있음)면 무시
-            # st.rerun() 제거 → 폼 제출과 이미지 클릭이 같은 run에서 충돌하지 않게
+            # temp_rx가 없을 때만 새 클릭 수락 (저장 직후 캐시 재유입 차단)
             if val and st.session_state.get("temp_rx") is None:
                 st.session_state.temp_rx       = val["x"] / DISPLAY_W
                 st.session_state.temp_ry       = val["y"] / DISPLAY_H
                 st.session_state.pos_highlight = None
-                # rerun 하지 않음 — 같은 run 안에서 col_form이 temp_rx를 읽어 폼 렌더링
 
             if st.session_state.get("temp_rx") is not None:
                 st.success("📍 위치 선택됨 — 오른쪽에서 포지션과 담당자를 선택 후 저장하세요.")
@@ -555,9 +565,8 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 st.caption("이미지를 먼저 클릭해야 등록할 수 있습니다.")
                 st.selectbox("포지션", POSITION_ORDER, disabled=True, key="pos_sel_disabled")
                 st.selectbox("담당자", member_options, disabled=True, key="mem_sel_disabled")
-                st.button("✅ 배치 저장", disabled=True, use_container_width=True)
+                st.button("✅ 배치 저장", disabled=True, use_container_width=True, key="save_pin_dis")
             else:
-                # st.form 제거 → 폼 내부 submit이 rerun을 일으켜 val을 재처리하는 문제 원천 차단
                 pin_position = st.selectbox("포지션", POSITION_ORDER, key="pos_sel_active")
                 pin_member   = st.selectbox("담당자", member_options,   key="mem_sel_active")
 
@@ -568,6 +577,8 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         "position": pin_position,
                         "member":   pin_member,
                     })
+                    # click_seq 증가 → 이미지 위젯 key 변경 → 캐시 클릭값 완전 초기화
+                    st.session_state.pos_click_seq = st.session_state.get("pos_click_seq", 0) + 1
                     st.session_state.temp_rx          = None
                     st.session_state.temp_ry          = None
                     st.session_state.pos_result_text  = ""
@@ -582,19 +593,17 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             else:
                 for idx, pin in enumerate(st.session_state.pos_assignments):
                     color_dot = POSITION_COLORS.get(pin["position"], DEFAULT_PIN_COLOR)
-                    c_btn, c_del = st.columns([5, 1])
                     label_html = (
                         f"<span style='display:inline-block;width:10px;height:10px;"
-                        f"border-radius:50%;background:{color_dot};margin-right:6px;'></span>"
+                        f"border-radius:50%;background:{color_dot};margin-right:6px;vertical-align:middle;'></span>"
                         f"<b>{pin['position']}</b> — {pin.get('member','미배정')}"
                     )
                     st.markdown(
-                        f"<div style='display:flex;align-items:center;justify-content:space-between;"
-                        f"padding:4px 0;'>{label_html}</div>",
+                        f"<div style='padding:3px 0;'>{label_html}</div>",
                         unsafe_allow_html=True,
                     )
                     c_b, c_d = st.columns([5, 1])
-                    if c_b.button(f"🔍 지도에서 보기", key=f"hl_{idx}", use_container_width=True):
+                    if c_b.button("🔍 지도에서 보기", key=f"hl_{idx}", use_container_width=True):
                         st.session_state.pos_highlight = (pin["rx"], pin["ry"])
                         st.rerun()
                     if c_d.button("🗑️", key=f"del_{idx}"):
@@ -608,17 +617,27 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         c_res1, c_res2 = st.columns([1, 1])
 
         if c_res1.button("📋 예배 배치 결과 생성", type="primary", use_container_width=True):
-            if not st.session_state.pos_assignments:
-                st.session_state.pos_result_text = ""
-                st.warning("배치된 항목이 없습니다.")
-            else:
-                sorted_list = sorted(
-                    st.session_state.pos_assignments,
-                    key=lambda x: POSITION_ORDER.index(x["position"]) if x["position"] in POSITION_ORDER else 99,
-                )
-                st.session_state.pos_result_text = "\n".join(
-                    [f"{p['position']}: {p.get('member','미배정')}" for p in sorted_list]
-                )
+            # 포지션별 담당자 매핑 (여러 명이면 ", "로 연결)
+            assign_map = {}
+            for p in st.session_state.pos_assignments:
+                pos = p["position"]
+                mem = p.get("member", "미배정")
+                if pos in assign_map:
+                    assign_map[pos] = assign_map[pos] + ", " + mem
+                else:
+                    assign_map[pos] = mem
+
+            date_str = st.session_state.pos_assign_date.strftime("%Y.%m.%d")
+
+            lines = [f"- {date_str} 예배 배치 -", ""]
+            for i, pos in enumerate(POSITION_ORDER):
+                member_val = assign_map.get(pos, "")
+                lines.append(f"{pos}: {member_val}")
+                # 9번째(인덱스 8, "1~3번 카메라") 이후 빈 줄 삽입
+                if i == RESULT_GROUP_BREAK_AFTER:
+                    lines.append("")
+
+            st.session_state.pos_result_text = "\n".join(lines)
 
         if c_res2.button("🗑️ 배치 전체 초기화", type="secondary", use_container_width=True):
             st.session_state.pos_assignments  = []
@@ -626,9 +645,9 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.session_state.temp_ry          = None
             st.session_state.pos_highlight    = None
             st.session_state.pos_result_text  = ""
+            st.session_state.pos_click_seq    = st.session_state.get("pos_click_seq", 0) + 1
             st.rerun()
 
-        # 결과 텍스트 — session_state에 저장해 rerun 후에도 유지
         if st.session_state.get("pos_result_text"):
             st.markdown("**📝 복사해서 사용하세요:**")
             st.code(st.session_state.pos_result_text, language=None)
