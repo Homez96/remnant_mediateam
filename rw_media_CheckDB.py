@@ -453,8 +453,8 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.session_state.pos_fixed_image = Image.open("assets/OryunMainHall.png") 
         except Exception as e:
             st.error(f"이미지를 불러올 수 없습니다: {e}")
-
-    fixed_img = st.session_state.get('pos_fixed_image')
+            
+fixed_img = st.session_state.get('pos_fixed_image')
 
     if fixed_img is not None:
         col_main, col_list = st.columns([3, 1])
@@ -462,13 +462,18 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         with col_main:
             st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
             
+            # --- 수정된 부분: 이미지 모드 변환 시작 ---
+            # PNG 등 투명도(Alpha)가 포함된 이미지를 RGB로 변환
+            if fixed_img.mode != 'RGB':
+                fixed_img = fixed_img.convert('RGB')
+            # --- 수정된 부분 끝 ---
+            
             # 2. 핀 배치 라이브러리 사용
             value = streamlit_image_coordinates(
                 fixed_img, 
                 key="map_click",
                 use_container_width=True
             )
-            
             # 3. 클릭 위치 핀 설정 모드
             if value:
                 st.session_state.pos_click_x = value["x"]
