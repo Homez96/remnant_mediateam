@@ -457,12 +457,11 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 # 7. 포지션 배치 관리
 # ══════════════════════════════════════════════════════════════════════
 
-# 7. 포지션 배치 관리 (방어 코드 추가)
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
     try:
-        # 1. 이미지 로드 (캐시 사용)
+        # 1. 이미지 로드 (캐시된 함수 호출)
         pos_img = get_position_image()
         
         col_main, col_list = st.columns([3, 1])
@@ -470,15 +469,13 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         with col_main:
             st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
             
-   # 2. 이미지 렌더링 부분 수정
-val = streamlit_image_coordinates(
-    pos_img, 
-    key="map_click",
-    # use_container_width=True 대신 아래 파라미터를 사용하세요
-    use_column_width=True 
-)
+            # 2. 이미지 렌더링 (파라미터 수정)
+            val = streamlit_image_coordinates(
+                pos_img, 
+                key="map_click",
+                use_column_width=True
+            )
             
-            # 좌표 저장 로직 (val이 None이 아닐 때만)
             if val:
                 st.session_state.pos_click_x = val["x"]
                 st.session_state.pos_click_y = val["y"]
@@ -508,14 +505,18 @@ val = streamlit_image_coordinates(
 
         with col_list:
             st.markdown("### 📋 현재 배치 현황")
-            for idx, pin in enumerate(st.session_state.pos_assignments):
-                st.write(f"**{pin['label']}** ({pin['position']})")
-                if st.button("삭제", key=f"del_{idx}"):
-                    st.session_state.pos_assignments.pop(idx)
-                    st.rerun()
+            if not st.session_state.pos_assignments:
+                st.info("배정된 핀이 없습니다.")
+            else:
+                for idx, pin in enumerate(st.session_state.pos_assignments):
+                    st.write(f"**{pin['label']}** ({pin['position']})")
+                    if st.button("삭제", key=f"del_{idx}"):
+                        st.session_state.pos_assignments.pop(idx)
+                        st.rerun()
 
     except Exception as e:
-        st.error(f"이미지 로드 실패: {e}")
+        # 이 부분이 반드시 있어야 문법 오류가 사라집니다.
+        st.error(f"이미지 로드 중 오류가 발생했습니다: {e}")
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
