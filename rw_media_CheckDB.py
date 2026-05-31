@@ -4,8 +4,30 @@ from datetime import date, datetime
 import time
 import requests
 from streamlit_image_coordinates import streamlit_image_coordinates
-from PIL import Image  
+from PIL import Image
 
+# 1. Secrets에서 이미지 URL 불러오기
+# secrets.toml에 [imgbb] 섹션 아래 image_url이 저장되어 있어야 합니다.
+try:
+    image_url = st.secrets["imgbb"]["image_url"]
+    
+    # 2. 이미지 표시 및 좌표 추출 기능 구현
+    st.subheader("업로드한 이미지 확인")
+    
+    # URL로부터 이미지를 가져와서 보여줌
+    st.image(image_url, caption="불러온 이미지", use_column_width=True)
+    
+    # (선택 사항) 만약 이미지 좌표를 추출해야 한다면:
+    # st.write("이미지를 클릭하여 좌표를 확인하세요.")
+    # value = streamlit_image_coordinates(image_url)
+    # st.write(value)
+
+except KeyError:
+    st.error("Secrets에 'image_url' 정보가 없습니다. 설정을 다시 확인해주세요.")
+except Exception as e:
+    st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
+
+# 이후 기존에 작성하신 나머지 코드들...
 # ══════════════════════════════════════════════════════════════════════
 # 0. 이미지 업로드 (ImgBB)
 # ══════════════════════════════════════════════════════════════════════
