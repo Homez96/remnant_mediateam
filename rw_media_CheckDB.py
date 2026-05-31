@@ -449,93 +449,69 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 # ══════════════════════════════════════════════════════════════════════
 
 elif st.session_state.page == "🎬 포지션 배치 관리":
-        st.subheader("🎬 포지션 배치 관리")
+    st.subheader("🎬 포지션 배치 관리")
 
-    # 1. Secrets에서 이미지 URL 불러오기
-# secrets.toml에 [imgbb] 섹션 아래 image_url이 저장되어 있어야 합니다.
-try:
-    image_url = st.secrets["imgbb"]["image_url"]
+    # 1. 이미지 로드 (Secrets URL 우선 사용)
+    if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
+        try:
+            # Secrets에서 URL 가져오기
+            image_url = st.secrets["imgbb"]["image_url"]
+            # URL에서 이미지 다운로드 및 객체 변환
+            response = requests.get(image_url, stream=True)
+            img = Image.open(response.raw).convert('RGB')
+            st.session_state.pos_fixed_image = img
+        except Exception as e:
+            st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
+            st.stop()
+
+    fixed_img = st.session_state.pos_fixed_image
+
+    col_main, col_list = st.columns([3, 1])
     
-    # 2. 이미지 표시 및 좌표 추출 기능 구현
-    st.subheader("업로드한 이미지 확인")
-    
-    # URL로부터 이미지를 가져와서 보여줌
-    st.image(image_url, caption="불러온 이미지", use_column_width=True)
-    
-    # (선택 사항) 만약 이미지 좌표를 추출해야 한다면:
-    # st.write("이미지를 클릭하여 좌표를 확인하세요.")
-    # value = streamlit_image_coordinates(image_url)
-    # st.write(value)
-
-except KeyError:
-    st.error("Secrets에 'image_url' 정보가 없습니다. 설정을 다시 확인해주세요.")
-except Exception as e:
-    st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
-
-# 이후 기존에 작성하신 나머지 코드들...
+    with col_main:
+        st.write("이미지를 클릭하여 핀을 배치하세요.")
         
-        # 1. 파일 경로 설정
-        img_path = "assets/OryunMainHall.png"
+        # 2. 이미지 좌표 라이브러리 실행
+        value = streamlit_image_coordinates(
+            fixed_img, 
+            key="map_click",
+            use_container_width=True
+        )
         
-        # 2. 이미지 객체 로드 (세션 저장)
-        if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
-            try:
-                # 파일을 열어 RGB 이미지 객체로 변환하여 보관
-                img = Image.open(img_path).convert('RGB')
-                st.session_state.pos_fixed_image = img
-            except Exception as e:
-                st.error(f"이미지 로드 실패: {e}")
-                st.stop() # 에러 발생 시 앱 중단
-
-        fixed_img = st.session_state.pos_fixed_image
-
-        col_main, col_list = st.columns([3, 1])
-        
-        with col_main:
-            st.write("이미지를 클릭하여 핀을 배치하세요.")
+        if value:
+            st.session_state.pos_click_x = value["x"]
+            st.session_state.pos_click_y = value["y"]
             
-            # 3. 라이브러리 실행 (이미 객체화된 fixed_img 전달)
-            value = streamlit_image_coordinates(
-                fixed_img, 
-                key="map_click",
-                use_container_width=True
-            )
-            
-            if value:
-                st.session_state.pos_click_x = value["x"]
-                st.session_state.pos_click_y = value["y"]
-                
-                with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
-                    with st.form("pin_add_form"):
-                        pin_name = st.text_input("핀 위치 이름")
-                        assignee = st.selectbox("담당 포지션", POSITIONS)
-                        if st.form_submit_button("배치 저장"):
-                            st.session_state.pos_assignments.append({
-                                "x": st.session_state.pos_click_x,
-                                "y": st.session_state.pos_click_y,
-                                "label": pin_name,
-                                "position": assignee
-                            })
-                            st.session_state.pos_click_x = None
-                            st.rerun()
-
-        # 우측 리스트... (기존과 동일)
-
-        with col_list:
-            st.markdown("### 📋 현재 배치 현황")
-            if not st.session_state.pos_assignments:
-                st.info("배정된 인원이 없습니다.")
-            else:
-                for idx, pin in enumerate(st.session_state.pos_assignments):
-                    st.markdown(f"""
-                    <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:5px;'>
-                        <strong>{pin['label']}</strong><br>
-                        📍 {pin['position']}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    if st.button("삭제", key=f"del_pin_{idx}"):
-                        st.session_state.pos_assignments.pop(idx)
+            with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+                with st.form("pin_add_form"):
+                    pin_name = st.text_input("핀 위치 이름")
+                    assignee = st.selectbox("담당 포지션", POSITIONS)
+                    if st.form_submit_button("배치 저장"):
+                        st.session_state.pos_assignments.append({
+                            "x": st.session_state.pos_click_x,
+                            "y": st.session_state.pos_click_y,
+                            "label": pin_name,
+                            "position": assignee
+                        })
+                        st.session_state.pos_click_x = None
                         st.rerun()
+
+    # 3. 우측 리스트 (기존 코드 유지)
+    with col_list:
+        st.markdown("### 📋 현재 배치 현황")
+        if not st.session_state.pos_assignments:
+            st.info("배정된 인원이 없습니다.")
+        else:
+            for idx, pin in enumerate(st.session_state.pos_assignments):
+                st.markdown(f"""
+                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:5px;'>
+                    <strong>{pin['label']}</strong><br>
+                    📍 {pin['position']}
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("삭제", key=f"del_pin_{idx}"):
+                    st.session_state.pos_assignments.pop(idx)
+                    st.rerun()
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
