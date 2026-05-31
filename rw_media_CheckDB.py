@@ -4,6 +4,7 @@ from datetime import date, datetime
 import time
 import requests
 from streamlit_image_coordinates import streamlit_image_coordinates
+from PIL import Image  
 
 # ══════════════════════════════════════════════════════════════════════
 # 0. 이미지 업로드 (ImgBB)
