@@ -429,14 +429,16 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
     .pos-root * { font-family: 'Noto Sans KR', sans-serif; box-sizing: border-box; }
 
+    /* ── 헤더 ── */
     .pos-header {
         background: linear-gradient(135deg,#0f1923 0%,#1a2b3c 100%);
         color:#fff; padding:16px 22px 12px; border-radius:12px; margin-bottom:14px;
         box-shadow:0 4px 20px rgba(0,0,0,0.3);
     }
-    .pos-header h2 { margin:0; font-size:1.2rem; font-weight:900; letter-spacing:-0.5px; }
+    .pos-header h2 { margin:0; font-size:1.2rem; font-weight:900; letter-spacing:-0.5px; color:#fff; }
     .pos-header p  { margin:2px 0 0; font-size:0.78rem; color:#7faacc; }
 
+    /* ── 배치도 컨테이너 ── */
     .map-outer {
         background:#111820; border-radius:14px; padding:10px;
         box-shadow:0 8px 32px rgba(0,0,0,0.4);
@@ -447,41 +449,76 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         font-size:0.72rem; font-weight:700; letter-spacing:4px; color:#5a8eb5;
         margin-bottom:6px; border-bottom:2px solid #1e3a5f;
     }
-    .map-wrap { position:relative; display:block; width:100%; border-radius:8px; overflow:hidden; }
-    .map-wrap img { width:100%; display:block; border-radius:8px; }
+    /* 이미지 비율(16:9) 유지 — 잘림 방지 */
+    .map-wrap {
+        position:relative; display:block; width:100%;
+        aspect-ratio:16/9; border-radius:8px; overflow:hidden;
+        background:#0d1825;
+    }
+    .map-wrap img {
+        position:absolute; top:0; left:0;
+        width:100%; height:100%;
+        object-fit:contain;   /* contain = 이미지 전체가 보임, 잘리지 않음 */
+        display:block; border-radius:8px;
+    }
 
+    /* ── 핀 ── */
     .pin-outer {
         position:absolute; transform:translate(-50%,-100%);
         display:flex; flex-direction:column; align-items:center;
         z-index:20; pointer-events:none;
     }
     .pin-circle {
-        width:34px; height:34px; border-radius:50%;
+        width:38px; height:38px; border-radius:50%;
         display:flex; align-items:center; justify-content:center;
-        font-size:0.65rem; font-weight:800; color:#fff;
-        border:2.5px solid rgba(255,255,255,0.5);
-        box-shadow:0 2px 8px rgba(0,0,0,0.5);
+        font-size:0.62rem; font-weight:900; color:#fff;
+        border:3px solid rgba(255,255,255,0.9);
+        box-shadow:0 0 0 3px rgba(0,0,0,0.5), 0 4px 12px rgba(0,0,0,0.6);
     }
-    .pin-circle.idle     { background:linear-gradient(135deg,#2563eb,#1d4ed8); }
-    .pin-circle.active   { background:linear-gradient(135deg,#f59e0b,#d97706); border-color:#fff; }
-    .pin-circle.assigned { background:linear-gradient(135deg,#16a34a,#15803d); }
-    .pin-needle { width:3px; height:9px; border-radius:0 0 3px 3px; margin-top:-2px; }
+    .pin-circle.idle     {
+        background:linear-gradient(135deg,#2563eb,#1d4ed8);
+        border-color:rgba(255,255,255,0.7);
+    }
+    .pin-circle.active   {
+        background:linear-gradient(135deg,#f59e0b,#d97706);
+        border-color:#fff;
+        box-shadow:0 0 0 4px rgba(245,158,11,0.5), 0 4px 16px rgba(0,0,0,0.6);
+        animation:pin-pulse 1.2s ease-in-out infinite;
+    }
+    .pin-circle.assigned {
+        background:linear-gradient(135deg,#16a34a,#15803d);
+        border-color:rgba(255,255,255,0.8);
+    }
+    @keyframes pin-pulse {
+        0%,100% { box-shadow:0 0 0 4px rgba(245,158,11,0.5), 0 4px 16px rgba(0,0,0,0.6); }
+        50%      { box-shadow:0 0 0 8px rgba(245,158,11,0.25), 0 4px 16px rgba(0,0,0,0.6); }
+    }
+    .pin-needle { width:4px; height:12px; border-radius:0 0 4px 4px; margin-top:-1px; }
     .pin-needle.idle     { background:#2563eb; }
     .pin-needle.active   { background:#f59e0b; }
     .pin-needle.assigned { background:#16a34a; }
     .pin-label {
-        background:rgba(0,0,0,0.82); color:#fff;
-        font-size:0.58rem; font-weight:700; padding:2px 5px;
-        border-radius:4px; white-space:nowrap; margin-top:2px;
+        background:rgba(0,0,0,0.88); color:#fff;
+        font-size:0.65rem; font-weight:700; padding:3px 7px;
+        border-radius:5px; white-space:nowrap; margin-top:3px;
+        border:1px solid rgba(255,255,255,0.15);
+        text-shadow:0 1px 3px rgba(0,0,0,0.8);
+    }
+    .pin-label.active-label {
+        background:rgba(245,158,11,0.92);
+        color:#1a0a00;
+        border-color:rgba(255,255,255,0.4);
     }
 
+    /* ── 범례 ── */
     .legend {
-        display:flex; gap:12px; flex-wrap:wrap; padding:7px 10px;
-        background:rgba(255,255,255,0.04); border-radius:8px; margin-top:8px;
+        display:flex; gap:14px; flex-wrap:wrap; padding:8px 12px;
+        background:rgba(255,255,255,0.06); border-radius:8px; margin-top:8px;
     }
-    .legend-item { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8aaccc; font-weight:500; }
-    .legend-dot  { width:12px; height:12px; border-radius:50%; border:2px solid rgba(255,255,255,0.3); }
+    .legend-item { display:flex; align-items:center; gap:6px; font-size:0.73rem; color:#c0d8ee; font-weight:600; }
+    .legend-dot  { width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,0.4); flex-shrink:0; }
 
+    /* ── 상세 패널 ── */
     .detail-panel {
         background:linear-gradient(160deg,#12203a 0%,#0d1825 100%);
         border:1px solid #1e3a5f; border-radius:14px; padding:18px; margin-top:10px;
@@ -502,22 +539,24 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         border-left:3px solid #1e3a5f; padding-left:10px; margin:6px 0;
     }
 
+    /* ── 배정 패널 ── */
     .assign-panel {
-        background:#f8fafc; border-radius:14px; border:1px solid #e2e8f0;
+        background:#1e293b; border-radius:14px; border:1px solid #334155;
         padding:16px; height:fit-content;
     }
     .assign-title {
-        font-size:0.95rem; font-weight:800; color:#1e293b;
-        margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #e2e8f0;
+        font-size:0.95rem; font-weight:800; color:#f1f5f9;
+        margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #334155;
     }
     .assign-card {
         background:linear-gradient(135deg,#1e3a5f,#0f2340); border-radius:10px;
         padding:9px 13px; margin:4px 0;
         display:flex; align-items:center; justify-content:space-between; color:#fff;
     }
-    .assign-card .aname { font-size:0.88rem; font-weight:700; }
+    .assign-card .aname { font-size:0.88rem; font-weight:700; color:#f1f5f9; }
     .assign-card .apos  { font-size:0.75rem; color:#7faacc; margin-top:1px; }
 
+    /* ── 핀 추가 모드 배너 ── */
     .add-banner {
         background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff;
         border-radius:10px; padding:9px 14px; font-size:0.82rem; font-weight:700;
@@ -525,6 +564,11 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         animation:pulse 1.6s ease-in-out infinite;
     }
     @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.72;} }
+
+    /* ── 핀 버튼 그리드 가독성 ── */
+    .pin-grid-label {
+        font-size:0.82rem; font-weight:700; color:#cbd5e1; margin:10px 0 6px;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -616,7 +660,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             with tb4:
                 st.markdown(
                     f"<div style='text-align:center;padding:6px 0;font-size:0.75rem;"
-                    f"color:#1e3a5f;font-weight:700;'>핀 {len(st.session_state.pos_pins)}개</div>",
+                    f"color:#7faacc;font-weight:700;'>핀 {len(st.session_state.pos_pins)}개</div>",
                     unsafe_allow_html=True
                 )
 
@@ -633,11 +677,14 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 is_active = active_id == pin["id"]
                 cls = "active" if is_active else ("assigned" if assigned else "idle")
                 short = pin["label"][:5]
+                # active 핀은 크기를 키우고 라벨도 강조
+                outer_extra = "transform:translate(-50%,-100%) scale(1.35); z-index:30;" if is_active else ""
+                label_cls   = "pin-label active-label" if is_active else "pin-label"
                 pins_html += f"""
-                <div class="pin-outer" style="left:{pin['x']}%;top:{pin['y']}%;">
+                <div class="pin-outer" style="left:{pin['x']}%;top:{pin['y']}%;{outer_extra}">
                     <div class="pin-circle {cls}">{short}</div>
                     <div class="pin-needle {cls}"></div>
-                    <div class="pin-label">{pin['label']}</div>
+                    <div class="{label_cls}">{pin['label']}</div>
                 </div>"""
 
             map_html = f"""
@@ -653,11 +700,11 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     <div class="legend-item"><div class="legend-dot" style="background:#16a34a;"></div>배정완료</div>
                 </div>
             </div>"""
-            st.components.v1.html(map_html, height=500, scrolling=False)
+            st.components.v1.html(map_html, height=480, scrolling=False)
 
             # ── 핀 버튼 그리드 (클릭 선택) ───────────────────────
             if pins:
-                st.markdown("**📌 포지션 핀 선택**")
+                st.markdown("<div class='pin-grid-label'>📌 포지션 핀 선택</div>", unsafe_allow_html=True)
                 _cols_n = 5
                 _rows   = [pins[i:i+_cols_n] for i in range(0, len(pins), _cols_n)]
                 for _row in _rows:
@@ -843,7 +890,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.session_state.pos_assign_date = assign_date
         _wd = ["월","화","수","목","금","토","일"][assign_date.weekday()]
         st.markdown(
-            f"<div style='font-size:0.76rem;color:#64748b;margin:-4px 0 10px;'>"
+            f"<div style='font-size:0.76rem;color:#94a3b8;margin:-4px 0 10px;'>"
             f"{assign_date.strftime('%Y년 %m월 %d일')} ({_wd}요일)</div>",
             unsafe_allow_html=True
         )
