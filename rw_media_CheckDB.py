@@ -471,11 +471,12 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
             
             # 2. 이미지 렌더링
-            val = streamlit_image_coordinates(
-                pos_img, 
-                key="map_click",
-                use_container_width=True
-            )
+        val = streamlit_image_coordinates(
+    pos_img, 
+    key="map_click",
+    # use_container_width=True 대신 아래 파라미터를 사용하세요
+    use_column_width=True 
+)
             
             # 좌표 저장 로직 (val이 None이 아닐 때만)
             if val:
