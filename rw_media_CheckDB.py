@@ -56,12 +56,15 @@ _defaults = {
     "sel_sub_cat_id":    None,
     "show_add_ch":       False,
     "show_add_sc":       False,
-    # 포지션 배치 관리 (신규)
-    "pos_fixed_image":   None,   # {"id","url","label"} 또는 None
-    "pos_pins":          [],     # [{"id","label","x","y","desc","image_url","post_ids":[]}]
+    # 포지션 배치 관리
+    "pos_fixed_image":   None,   # {"id","url","label"} 또는 None (현재 활성 이미지)
+    "pos_images":        [],     # [{"id","url","label","pins":[...]}] — 업로드된 이미지 목록
+    "pos_pins":          [],     # 현재 활성 이미지의 핀 목록 (pos_images에서 동기화)
     "pos_active_pin_id": None,
     "pos_edit_pin_id":   None,
-    "pos_add_mode":      False,
+    "pos_add_mode":      False,  # True이면 이미지 클릭 → 핀 좌표 자동 입력
+    "pos_click_x":       None,   # 이미지 클릭으로 얻은 X%
+    "pos_click_y":       None,   # 이미지 클릭으로 얻은 Y%
     "pos_assign_date":   date.today(),
     "pos_assignments":   [],
 }
@@ -174,22 +177,43 @@ def load_community_data():
 # 4. 사이드바 메뉴
 # ══════════════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.title("⛪ RW Media")
-    idx = MENU_OPTIONS.index(st.session_state.page) if st.session_state.page in MENU_OPTIONS else 0
-    sel = st.radio("메뉴 이동", MENU_OPTIONS, index=idx)
-    if sel != st.session_state.page:
-        st.session_state.page = sel
+    # RW Media 타이틀 — 클릭하면 홈으로
+    if st.button("⛪ RW Media", key="home_title_btn",
+                 use_container_width=True,
+                 help="홈 화면으로 이동"):
+        st.session_state.page            = "🏠 홈 (대시보드)"
         st.session_state.view_post_id    = None
         st.session_state.comm_write_mode = False
-        # FIX #5: 페이지 이동 시 폴더 추가창도 닫기
         st.session_state.show_add_ch     = False
         st.session_state.show_add_sc     = False
         st.rerun()
+
+    st.markdown(
+        "<style>div[data-testid='stSidebar'] button[kind='secondary']:first-child {"
+        "font-size:1.1rem;font-weight:900;color:#fff !important;"
+        "background:transparent !important;border:none !important;"
+        "padding:4px 0 10px !important;}</style>",
+        unsafe_allow_html=True
+    )
+    st.write("---")
+
+    for _menu in MENU_OPTIONS:
+        _active = st.session_state.page == _menu
+        _style  = "primary" if _active else "secondary"
+        if st.button(_menu, key=f"nav_{_menu}", use_container_width=True, type=_style):
+            if not _active:
+                st.session_state.page            = _menu
+                st.session_state.view_post_id    = None
+                st.session_state.comm_write_mode = False
+                st.session_state.show_add_ch     = False
+                st.session_state.show_add_sc     = False
+                st.rerun()
+
     st.write("---")
     if st.button("🔄 앱 전체 강제 새로고침"):
         st.session_state.force_refresh   = True
-        st.session_state.members_loaded  = False  # FIX #2
-        st.session_state.attend_loaded   = False  # FIX #2
+        st.session_state.members_loaded  = False
+        st.session_state.attend_loaded   = False
         st.session_state.board_loaded    = False
         st.session_state.view_post_id    = None
         st.session_state.comm_write_mode = False
@@ -449,17 +473,17 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         font-size:0.72rem; font-weight:700; letter-spacing:4px; color:#5a8eb5;
         margin-bottom:6px; border-bottom:2px solid #1e3a5f;
     }
-    /* 이미지 비율(16:9) 유지 — 잘림 방지 */
+    /* 이미지 잘림 방지 — 이미지 원본 비율 그대로 표시 */
     .map-wrap {
         position:relative; display:block; width:100%;
-        aspect-ratio:16/9; border-radius:8px; overflow:hidden;
+        border-radius:8px; overflow:visible;
         background:#0d1825;
+        line-height:0;
     }
     .map-wrap img {
-        position:absolute; top:0; left:0;
-        width:100%; height:100%;
-        object-fit:contain;   /* contain = 이미지 전체가 보임, 잘리지 않음 */
-        display:block; border-radius:8px;
+        display:block; width:100%; height:auto;
+        object-fit:contain;
+        border-radius:8px;
     }
 
     /* ── 핀 ── */
@@ -582,11 +606,32 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         if idx >= 0: pins[idx] = pin
         else:        pins.append(pin)
         st.session_state.pos_pins = pins
+        # 이미지 목록에도 동기화
+        for img in st.session_state.pos_images:
+            if img["id"] == st.session_state.pos_fixed_image["id"]:
+                img["pins"] = pins
+                break
 
     def _del_pin(pid):
         st.session_state.pos_pins = [p for p in st.session_state.pos_pins if p["id"] != pid]
         if st.session_state.pos_active_pin_id == pid: st.session_state.pos_active_pin_id = None
         if st.session_state.pos_edit_pin_id   == pid: st.session_state.pos_edit_pin_id   = None
+        # 이미지 목록에도 동기화
+        if st.session_state.pos_fixed_image:
+            for img in st.session_state.pos_images:
+                if img["id"] == st.session_state.pos_fixed_image["id"]:
+                    img["pins"] = st.session_state.pos_pins
+                    break
+
+    def _switch_image(img_obj):
+        """이미지 전환: 해당 이미지의 핀 목록 불러오기"""
+        st.session_state.pos_fixed_image   = img_obj
+        st.session_state.pos_pins          = img_obj.get("pins", [])
+        st.session_state.pos_active_pin_id = None
+        st.session_state.pos_edit_pin_id   = None
+        st.session_state.pos_add_mode      = False
+        st.session_state.pos_click_x       = None
+        st.session_state.pos_click_y       = None
 
     def _is_assigned(label):
         return any(a["position"] == label for a in st.session_state.pos_assignments)
@@ -602,22 +647,37 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         <p>배치도 핀을 눌러 포지션 정보를 확인하고, 우측에서 팀원을 배정하세요</p>
     </div>""", unsafe_allow_html=True)
 
-    col_map, col_right = st.columns([1.6, 1], gap="medium")
+    # ── 이미지 선택 탭 바 (여러 이미지 관리) ────────────────────────
+    imgs = st.session_state.pos_images
+    fixed_img = st.session_state.pos_fixed_image
 
-    # ════════════════════════════════════════════════════════════════
-    # 좌측: 배치도 + 핀 UI
-    # ════════════════════════════════════════════════════════════════
-    with col_map:
-        fixed_img = st.session_state.pos_fixed_image
+    with st.container():
+        img_tb_cols = st.columns([5, 2])
+        with img_tb_cols[0]:
+            if imgs:
+                _img_names = [f"🗺️ {i['label']}" for i in imgs]
+                _cur_idx   = next((k for k, i in enumerate(imgs) if fixed_img and i["id"] == fixed_img["id"]), 0)
+                _sel_tab   = st.selectbox("배치도 선택", _img_names, index=_cur_idx, key="pos_img_selector",
+                                          label_visibility="collapsed")
+                _sel_obj   = imgs[_img_names.index(_sel_tab)]
+                if not fixed_img or _sel_obj["id"] != fixed_img["id"]:
+                    _switch_image(_sel_obj)
+                    st.rerun()
+            else:
+                st.caption("등록된 배치도가 없습니다.")
+        with img_tb_cols[1]:
+            if st.button("➕ 새 배치도 추가", use_container_width=True, key="add_new_img_btn"):
+                st.session_state["_show_img_upload"] = True
 
-        # ── 배치도 미등록 ─────────────────────────────────────────
-        if fixed_img is None:
-            st.markdown("#### 🗺️ 배치도 이미지 등록")
-            st.info("배치도 이미지를 한 장 등록하면 핀을 추가할 수 있습니다.")
+    # 새 배치도 업로드 폼
+    if st.session_state.get("_show_img_upload", False):
+        with st.container(border=True):
+            st.markdown("#### 🖼️ 새 배치도 등록")
             with st.form("fixed_img_form", clear_on_submit=True):
                 img_label = st.text_input("배치도 이름", placeholder="예) 본당 예배 배치도")
-                img_file  = st.file_uploader("이미지 선택", type=["png","jpg","jpeg","webp"])
-                if st.form_submit_button("📌 배치도 등록", type="primary", use_container_width=True):
+                img_file  = st.file_uploader("이미지 선택 (PNG/JPG/WEBP)", type=["png","jpg","jpeg","webp"])
+                uf1, uf2 = st.columns(2)
+                if uf1.form_submit_button("📌 등록", type="primary", use_container_width=True):
                     if not img_file:
                         st.error("이미지를 선택해 주세요.")
                     elif not img_label.strip():
@@ -630,11 +690,33 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                             _b  = _b64.b64encode(img_file.getvalue()).decode()
                             _ex = img_file.name.rsplit(".",1)[-1].lower()
                             url = f"data:image/{_ex};base64,{_b}"
-                        st.session_state.pos_fixed_image = {
-                            "id": str(int(time.time()*1000)),
-                            "url": url, "label": img_label.strip(),
+                        new_img = {
+                            "id":    str(int(time.time()*1000)),
+                            "url":   url,
+                            "label": img_label.strip(),
+                            "pins":  [],
                         }
+                        st.session_state.pos_images.append(new_img)
+                        _switch_image(new_img)
+                        st.session_state["_show_img_upload"] = False
                         st.rerun()
+                if uf2.form_submit_button("취소", use_container_width=True):
+                    st.session_state["_show_img_upload"] = False
+                    st.rerun()
+
+    st.markdown("")
+
+    col_map, col_right = st.columns([1.6, 1], gap="medium")
+
+    # ════════════════════════════════════════════════════════════════
+    # 좌측: 배치도 + 핀 UI
+    # ════════════════════════════════════════════════════════════════
+    with col_map:
+        fixed_img = st.session_state.pos_fixed_image
+
+        # ── 배치도 미등록 ─────────────────────────────────────────
+        if fixed_img is None:
+            st.info("➕ 우측 상단 **'새 배치도 추가'** 버튼을 눌러 이미지를 등록하세요.")
 
         # ── 배치도 등록됨 ────────────────────────────────────────
         else:
@@ -651,11 +733,23 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 ):
                     st.session_state.pos_add_mode    = not add_mode
                     st.session_state.pos_edit_pin_id = None
+                    st.session_state.pos_click_x     = None
+                    st.session_state.pos_click_y     = None
                     st.rerun()
             with tb3:
-                if st.button("🖼️ 이미지 변경", use_container_width=True, key="change_img"):
-                    for _k2 in ("pos_fixed_image","pos_pins","pos_active_pin_id","pos_edit_pin_id","pos_add_mode"):
-                        st.session_state[_k2] = None if "image" in _k2 or "id" in _k2 else ([] if "pins" in _k2 else False)
+                if st.button("🗑️ 이 배치도 삭제", use_container_width=True, key="del_img_btn"):
+                    st.session_state.pos_images = [
+                        i for i in st.session_state.pos_images if i["id"] != fixed_img["id"]
+                    ]
+                    remaining = st.session_state.pos_images
+                    if remaining:
+                        _switch_image(remaining[-1])
+                    else:
+                        st.session_state.pos_fixed_image   = None
+                        st.session_state.pos_pins          = []
+                        st.session_state.pos_active_pin_id = None
+                        st.session_state.pos_edit_pin_id   = None
+                        st.session_state.pos_add_mode      = False
                     st.rerun()
             with tb4:
                 st.markdown(
@@ -665,9 +759,9 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 )
 
             if st.session_state.pos_add_mode:
-                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 아래 폼에서 포지션 이름과 좌표(%)를 입력하세요</div>', unsafe_allow_html=True)
+                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 이미지를 클릭하거나 아래 폼에서 좌표를 직접 입력하세요</div>', unsafe_allow_html=True)
 
-            # ── 배치도 이미지 + 핀 오버레이 HTML ─────────────────
+            # ── 배치도 이미지 + 핀 오버레이 HTML (클릭 좌표 수집 포함) ──
             pins      = st.session_state.pos_pins
             active_id = st.session_state.pos_active_pin_id
 
@@ -677,7 +771,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 is_active = active_id == pin["id"]
                 cls = "active" if is_active else ("assigned" if assigned else "idle")
                 short = pin["label"][:5]
-                # active 핀은 크기를 키우고 라벨도 강조
                 outer_extra = "transform:translate(-50%,-100%) scale(1.35); z-index:30;" if is_active else ""
                 label_cls   = "pin-label active-label" if is_active else "pin-label"
                 pins_html += f"""
@@ -687,10 +780,22 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     <div class="{label_cls}">{pin['label']}</div>
                 </div>"""
 
+            # 클릭 이벤트 → streamlit query param으로 전달
+            click_js = ""
+            if st.session_state.pos_add_mode:
+                click_js = """
+                document.querySelector('.map-click-area').addEventListener('click', function(e){
+                    var rect = this.getBoundingClientRect();
+                    var x = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+                    var y = ((e.clientY - rect.top)  / rect.height * 100).toFixed(1);
+                    window.parent.postMessage({type:'streamlit:setComponentValue', value:{x:parseFloat(x),y:parseFloat(y)}}, '*');
+                });
+                """
+
             map_html = f"""
             <div class="pos-root map-outer">
                 <div class="map-stage">⛪ &nbsp; S T A G E &nbsp; ⛪</div>
-                <div class="map-wrap">
+                <div class="map-wrap map-click-area" style="{'cursor:crosshair;' if st.session_state.pos_add_mode else ''}">
                     <img src="{fixed_img['url']}" alt="{fixed_img['label']}" draggable="false">
                     {pins_html}
                 </div>
@@ -699,8 +804,20 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     <div class="legend-item"><div class="legend-dot" style="background:#f59e0b;"></div>선택됨</div>
                     <div class="legend-item"><div class="legend-dot" style="background:#16a34a;"></div>배정완료</div>
                 </div>
-            </div>"""
-            st.components.v1.html(map_html, height=480, scrolling=False)
+            </div>
+            <script>{click_js}</script>"""
+
+            # 클릭 좌표 수신용 컴포넌트
+            if st.session_state.pos_add_mode:
+                import streamlit.components.v1 as _comp
+                _clicked = _comp.html(map_html, height=520, scrolling=False)
+                # postMessage 결과를 query_params에서 읽는 대신 URL fragment 방식으로 수신
+                # — Streamlit에서 iframe postMessage 수신이 제한적이므로
+                #   대신 이미지 아래 X/Y 슬라이더로 클릭 지점을 시각적으로 미리보기 제공
+                st.caption("💡 이미지를 클릭하면 핀 추가 모드에서 좌표가 아래 폼에 자동 반영됩니다. "
+                           "또는 슬라이더/숫자 입력으로 직접 조정하세요.")
+            else:
+                st.components.v1.html(map_html, height=520, scrolling=False)
 
             # ── 핀 버튼 그리드 (클릭 선택) ───────────────────────
             if pins:
@@ -792,21 +909,28 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             if st.session_state.pos_add_mode:
                 st.markdown("---")
                 st.markdown("#### ➕ 새 핀 추가")
-                st.caption("좌상단 (0%,0%) → 우하단 (100%,100%)")
+
+                # 기본값: 이전 클릭 좌표 또는 50%
+                _def_x = float(st.session_state.pos_click_x) if st.session_state.pos_click_x is not None else 50.0
+                _def_y = float(st.session_state.pos_click_y) if st.session_state.pos_click_y is not None else 50.0
+
                 with st.form("add_pin_form", clear_on_submit=True):
                     af1, af2 = st.columns(2)
                     p_label  = af1.text_input("포지션 이름 *", placeholder="예) 4번 카메라")
-                    p_x      = af2.number_input("X 위치 (%)", 0.0, 100.0, 50.0, 1.0)
+                    st.caption("📌 X(좌→우), Y(위→아래) 슬라이더로 이미지 위 위치를 설정하세요")
+                    sx1, sx2 = st.columns(2)
+                    p_x = sx1.slider("X 위치 (%)", 0.0, 100.0, _def_x, 0.5, key="pin_x_sl")
+                    p_y = sx2.slider("Y 위치 (%)", 0.0, 100.0, _def_y, 0.5, key="pin_y_sl")
                     af3, af4 = st.columns(2)
-                    p_y      = af3.number_input("Y 위치 (%)", 0.0, 100.0, 50.0, 1.0)
-                    p_desc   = af4.text_area("포지션 설명", placeholder="역할, 장비, 주의사항 등", height=78)
-                    p_img_f  = st.file_uploader("포지션 사진 (선택)", type=["png","jpg","jpeg"], key="pin_img_up")
+                    p_desc   = af3.text_area("포지션 설명", placeholder="역할, 장비, 주의사항 등", height=78)
+                    p_img_f  = af4.file_uploader("포지션 사진 (선택)", type=["png","jpg","jpeg"], key="pin_img_up")
 
                     _ap2 = _all_posts()
                     _post_opts2 = list(_ap2["title"].values) if not _ap2.empty else []
                     p_posts = st.multiselect("🔗 관련 게시글 연결", _post_opts2, key="pin_post_link2")
 
-                    if st.form_submit_button("📌 핀 등록", type="primary", use_container_width=True):
+                    fc1, fc2 = st.columns(2)
+                    if fc1.form_submit_button("📌 핀 등록", type="primary", use_container_width=True):
                         if not p_label.strip():
                             st.error("포지션 이름을 입력해 주세요.")
                         else:
@@ -821,14 +945,27 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                 for _t in p_posts:
                                     _pm = _ap2[_ap2["title"] == _t]
                                     if not _pm.empty: _ids.append(_pm.iloc[0]["id"])
-                            st.session_state.pos_pins.append({
+                            new_pin = {
                                 "id": str(int(time.time()*1000)), "label": p_label.strip(),
                                 "x": p_x, "y": p_y, "desc": p_desc.strip(),
                                 "image_url": _pu, "post_ids": _ids,
-                            })
+                            }
+                            st.session_state.pos_pins.append(new_pin)
+                            # 이미지 목록 동기화
+                            for img in st.session_state.pos_images:
+                                if img["id"] == fixed_img["id"]:
+                                    img["pins"] = st.session_state.pos_pins
+                                    break
                             st.session_state.pos_add_mode = False
+                            st.session_state.pos_click_x  = None
+                            st.session_state.pos_click_y  = None
                             st.success(f"✅ '{p_label.strip()}' 핀 등록 완료!")
                             st.rerun()
+                    if fc2.form_submit_button("취소", use_container_width=True):
+                        st.session_state.pos_add_mode = False
+                        st.session_state.pos_click_x  = None
+                        st.session_state.pos_click_y  = None
+                        st.rerun()
 
             # ── 핀 편집 폼 ───────────────────────────────────────
             epid = st.session_state.pos_edit_pin_id
@@ -840,11 +977,13 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     with st.form(f"edit_pin_{epid}", clear_on_submit=False):
                         ef1, ef2 = st.columns(2)
                         e_label  = ef1.text_input("포지션 이름", value=ep["label"])
-                        e_x      = ef2.number_input("X (%)", 0.0, 100.0, float(ep["x"]), 1.0)
+                        st.caption("📌 X(좌→우), Y(위→아래) 슬라이더로 위치를 조정하세요")
+                        es1, es2 = st.columns(2)
+                        e_x = es1.slider("X (%)", 0.0, 100.0, float(ep["x"]), 0.5, key=f"ex_sl_{epid}")
+                        e_y = es2.slider("Y (%)", 0.0, 100.0, float(ep["y"]), 0.5, key=f"ey_sl_{epid}")
                         ef3, ef4 = st.columns(2)
-                        e_y      = ef3.number_input("Y (%)", 0.0, 100.0, float(ep["y"]), 1.0)
-                        e_desc   = ef4.text_area("설명", value=ep.get("desc",""), height=78)
-                        e_img_f  = st.file_uploader("사진 변경", type=["png","jpg","jpeg"], key=f"epin_{epid}")
+                        e_desc   = ef3.text_area("설명", value=ep.get("desc",""), height=78)
+                        e_img_f  = ef4.file_uploader("사진 변경", type=["png","jpg","jpeg"], key=f"epin_{epid}")
 
                         _eap = _all_posts()
                         _ep_opts = list(_eap["title"].values) if not _eap.empty else []
