@@ -442,29 +442,31 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.force_refresh = True
                         st.rerun()
 
+# 7. 포지션 배치 관리 섹션 내부
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
     
-    col_main, col_list = st.columns([3, 1])
+    # 이미지 고정 로드
+    if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
+        try:
+            # 방금 업로드한 이미지 파일명으로 경로 설정 (예: assets/OryunMainHall.jpg)
+            st.session_state.pos_fixed_image = Image.open("assets/OryunMainHall.jpg") 
+        except Exception as e:
+            st.error("이미지를 불러올 수 없습니다. 파일 이름을 확인하세요.")
 
-    with col_main:
-        # 1. 파일 업로더
-        uploaded_file = st.file_uploader("배치도 이미지 업로드", type=["png", "jpg", "jpeg"])
+    fixed_img = st.session_state.get('pos_fixed_image')
+
+    if fixed_img is not None:
+        st.write("이미지를 클릭하여 위치를 선택하세요.")
         
-        # 업로드된 파일이 있으면 session_state에 저장
-        if uploaded_file is not None:
-            st.session_state.pos_fixed_image = uploaded_file
-
-        # 2. 이미지 출력 및 좌표 획득 로직 수정
-        if 'pos_fixed_image' in st.session_state and st.session_state.pos_fixed_image is not None:
-            st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
-            
-            # 여기서 직접 uploaded_file 객체(또는 bytes)를 넘깁니다.
-            value = streamlit_image_coordinates(
-                st.session_state.pos_fixed_image, 
-                key="map_click",
-                use_container_width=True
-            )
+        # 핀 배치 라이브러리 사용
+        value = streamlit_image_coordinates(
+            fixed_img, 
+            key="map_click",
+            use_container_width=True
+        )
+        
+        # ... (이하 좌표 획득 및 저장 로직 동일)
 
             if value:
                 st.session_state.pos_click_x = value["x"]
