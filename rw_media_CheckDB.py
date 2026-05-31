@@ -442,41 +442,38 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.force_refresh = True
                         st.rerun()
 
-# ══════════════════════════════════════════════════════════════════════
-# 7. 포지션 배치 관리 (수정본)
-# ══════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
-
-    # 레이아웃 구성: 왼쪽(맵), 오른쪽(배정 목록)
+    
     col_main, col_list = st.columns([3, 1])
 
     with col_main:
-        # 1. 이미지 업로드 (1920x1080 권장 안내)
-        uploaded_file = st.file_uploader("배치도 이미지 업로드 (1920x1080 권장)", type=["png", "jpg", "jpeg"])
-        if uploaded_file:
-            # 임시로 이미지 URL 생성 (실제 배포 시엔 ImgBB 업로드 로직 사용)
-            st.session_state.pos_fixed_image = {"url": uploaded_file}
+        # 1. 파일 업로더
+        uploaded_file = st.file_uploader("배치도 이미지 업로드", type=["png", "jpg", "jpeg"])
+        
+        # 업로드된 파일이 있으면 session_state에 저장
+        if uploaded_file is not None:
+            st.session_state.pos_fixed_image = uploaded_file
 
-        if st.session_state.pos_fixed_image:
+        # 2. 이미지 출력 및 좌표 획득 로직 수정
+        if 'pos_fixed_image' in st.session_state and st.session_state.pos_fixed_image is not None:
             st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
             
-            # 이미지 출력 및 클릭 좌표 획득
+            # 여기서 직접 uploaded_file 객체(또는 bytes)를 넘깁니다.
             value = streamlit_image_coordinates(
-                st.session_state.pos_fixed_image['url'],
+                st.session_state.pos_fixed_image, 
                 key="map_click",
                 use_container_width=True
             )
 
-            # 2. 클릭 위치 핀 설정 모드
             if value:
                 st.session_state.pos_click_x = value["x"]
                 st.session_state.pos_click_y = value["y"]
                 
-                # 3. 핀 설정 폼 (이미지 아래 즉시 팝업)
+                # 3. 핀 설정 폼
                 with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
                     with st.form("pin_add_form"):
-                        pin_name = st.text_input("핀 위치 이름 (예: 메인 카메라)")
+                        pin_name = st.text_input("핀 위치 이름")
                         assignee = st.selectbox("담당 포지션", POSITIONS)
                         
                         if st.form_submit_button("배치 저장"):
@@ -487,25 +484,8 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                 "position": assignee
                             }
                             st.session_state.pos_assignments.append(new_pin)
-                            st.success(f"{pin_name}에 {assignee} 배정 완료!")
+                            st.session_state.pos_click_x = None # 좌표 초기화
                             st.rerun()
-
-    with col_list:
-        # 4. 인터파크 예매 목록 스타일
-        st.markdown("### 📋 현재 배치 현황")
-        if not st.session_state.pos_assignments:
-            st.info("배정된 인원이 없습니다.")
-        else:
-            for idx, pin in enumerate(st.session_state.pos_assignments):
-                st.markdown(f"""
-                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:5px;'>
-                    <strong>{pin['label']}</strong><br>
-                    📍 {pin['position']}
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button("삭제", key=f"del_pin_{idx}"):
-                    st.session_state.pos_assignments.pop(idx)
-                    st.rerun()
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
