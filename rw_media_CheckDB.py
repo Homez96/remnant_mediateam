@@ -56,10 +56,14 @@ _defaults = {
     "sel_sub_cat_id":    None,
     "show_add_ch":       False,
     "show_add_sc":       False,
-    "pos_map_images":    [],
+    # 포지션 배치 관리 (신규)
+    "pos_fixed_image":   None,   # {"id","url","label"} 또는 None
+    "pos_pins":          [],     # [{"id","label","x","y","desc","image_url","post_ids":[]}]
+    "pos_active_pin_id": None,
+    "pos_edit_pin_id":   None,
+    "pos_add_mode":      False,
     "pos_assign_date":   date.today(),
     "pos_assignments":   [],
-    "pos_img_edit_id":   None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -413,320 +417,527 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.force_refresh = True
                         st.rerun()
 
+
 # ══════════════════════════════════════════════════════════════════════
-# 7. 포지션 배치 관리
+# 7. 포지션 배치 관리 — 인터파크 스타일 핀 맵 + 우측 배정 패널
 # ══════════════════════════════════════════════════════════════════════
 elif st.session_state.page == "🎬 포지션 배치 관리":
-    st.header("🎬 포지션 배치 관리")
 
-    tab_img, tab_assign, tab_roster = st.tabs(["🖼️ 배치도 이미지 관리", "📝 날짜·포지션 배정", "📋 명단 확인 & 복사"])
+    # ── CSS ─────────────────────────────────────────────────────────
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap');
+    .pos-root * { font-family: 'Noto Sans KR', sans-serif; box-sizing: border-box; }
 
-    with tab_img:
-        st.subheader("🖼️ 배치도 이미지 관리")
-        st.caption("배치도 이미지를 업로드하고, 이미지 위 각 포지션 아이콘 좌표를 설정하면 클릭 시 안내 문구가 표시됩니다.")
+    .pos-header {
+        background: linear-gradient(135deg,#0f1923 0%,#1a2b3c 100%);
+        color:#fff; padding:16px 22px 12px; border-radius:12px; margin-bottom:14px;
+        box-shadow:0 4px 20px rgba(0,0,0,0.3);
+    }
+    .pos-header h2 { margin:0; font-size:1.2rem; font-weight:900; letter-spacing:-0.5px; }
+    .pos-header p  { margin:2px 0 0; font-size:0.78rem; color:#7faacc; }
 
-        with st.expander("➕ 새 배치도 이미지 추가", expanded=len(st.session_state.pos_map_images) == 0):
-            up_label = st.text_input("배치도 이름 (예: 1부 예배 배치도)", key="pos_img_label_input")
-            up_file  = st.file_uploader("이미지 파일 선택", type=["png", "jpg", "jpeg", "webp"], key="pos_img_upload")
-            if st.button("☁️ 업로드 & 저장", type="primary", key="pos_img_upload_btn"):
-                if not up_file:
-                    st.error("❌ 이미지 파일을 선택해 주세요.")
-                elif not up_label.strip():
-                    st.error("❌ 배치도 이름을 입력해 주세요.")
-                else:
-                    with st.spinner("업로드 중..."):
-                        url = upload_image_to_storage(up_file)
-                    if url:
-                        new_img = {
-                            "id":    str(int(time.time() * 1000)),
-                            "url":   url,
-                            "label": up_label.strip(),
-                            "icons": [],
-                        }
-                        st.session_state.pos_map_images.append(new_img)
-                        st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다!")
-                        st.rerun()
+    .map-outer {
+        background:#111820; border-radius:14px; padding:10px;
+        box-shadow:0 8px 32px rgba(0,0,0,0.4);
+    }
+    .map-stage {
+        background:linear-gradient(180deg,#1b2e42 0%,#0d1b2a 100%);
+        border-radius:6px 6px 0 0; text-align:center; padding:7px 0 5px;
+        font-size:0.72rem; font-weight:700; letter-spacing:4px; color:#5a8eb5;
+        margin-bottom:6px; border-bottom:2px solid #1e3a5f;
+    }
+    .map-wrap { position:relative; display:block; width:100%; border-radius:8px; overflow:hidden; }
+    .map-wrap img { width:100%; display:block; border-radius:8px; }
+
+    .pin-outer {
+        position:absolute; transform:translate(-50%,-100%);
+        display:flex; flex-direction:column; align-items:center;
+        z-index:20; pointer-events:none;
+    }
+    .pin-circle {
+        width:34px; height:34px; border-radius:50%;
+        display:flex; align-items:center; justify-content:center;
+        font-size:0.65rem; font-weight:800; color:#fff;
+        border:2.5px solid rgba(255,255,255,0.5);
+        box-shadow:0 2px 8px rgba(0,0,0,0.5);
+    }
+    .pin-circle.idle     { background:linear-gradient(135deg,#2563eb,#1d4ed8); }
+    .pin-circle.active   { background:linear-gradient(135deg,#f59e0b,#d97706); border-color:#fff; }
+    .pin-circle.assigned { background:linear-gradient(135deg,#16a34a,#15803d); }
+    .pin-needle { width:3px; height:9px; border-radius:0 0 3px 3px; margin-top:-2px; }
+    .pin-needle.idle     { background:#2563eb; }
+    .pin-needle.active   { background:#f59e0b; }
+    .pin-needle.assigned { background:#16a34a; }
+    .pin-label {
+        background:rgba(0,0,0,0.82); color:#fff;
+        font-size:0.58rem; font-weight:700; padding:2px 5px;
+        border-radius:4px; white-space:nowrap; margin-top:2px;
+    }
+
+    .legend {
+        display:flex; gap:12px; flex-wrap:wrap; padding:7px 10px;
+        background:rgba(255,255,255,0.04); border-radius:8px; margin-top:8px;
+    }
+    .legend-item { display:flex; align-items:center; gap:5px; font-size:0.72rem; color:#8aaccc; font-weight:500; }
+    .legend-dot  { width:12px; height:12px; border-radius:50%; border:2px solid rgba(255,255,255,0.3); }
+
+    .detail-panel {
+        background:linear-gradient(160deg,#12203a 0%,#0d1825 100%);
+        border:1px solid #1e3a5f; border-radius:14px; padding:18px; margin-top:10px;
+        animation:slideDown 0.22s ease; box-shadow:0 8px 24px rgba(0,0,0,0.4);
+    }
+    @keyframes slideDown {
+        from { opacity:0; transform:translateY(-10px); }
+        to   { opacity:1; transform:translateY(0); }
+    }
+    .detail-title { font-size:1rem; font-weight:800; color:#f0f6ff; margin:0 0 3px; }
+    .detail-tag   {
+        display:inline-block; background:#1e3a5f; color:#7faacc;
+        font-size:0.68rem; font-weight:700; padding:2px 8px;
+        border-radius:12px; margin-bottom:8px;
+    }
+    .detail-desc {
+        font-size:0.83rem; color:#a8c4de; line-height:1.65; white-space:pre-wrap;
+        border-left:3px solid #1e3a5f; padding-left:10px; margin:6px 0;
+    }
+
+    .assign-panel {
+        background:#f8fafc; border-radius:14px; border:1px solid #e2e8f0;
+        padding:16px; height:fit-content;
+    }
+    .assign-title {
+        font-size:0.95rem; font-weight:800; color:#1e293b;
+        margin:0 0 12px; padding-bottom:8px; border-bottom:2px solid #e2e8f0;
+    }
+    .assign-card {
+        background:linear-gradient(135deg,#1e3a5f,#0f2340); border-radius:10px;
+        padding:9px 13px; margin:4px 0;
+        display:flex; align-items:center; justify-content:space-between; color:#fff;
+    }
+    .assign-card .aname { font-size:0.88rem; font-weight:700; }
+    .assign-card .apos  { font-size:0.75rem; color:#7faacc; margin-top:1px; }
+
+    .add-banner {
+        background:linear-gradient(135deg,#f59e0b,#d97706); color:#fff;
+        border-radius:10px; padding:9px 14px; font-size:0.82rem; font-weight:700;
+        text-align:center; margin-bottom:8px;
+        animation:pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.72;} }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── 헬퍼 ────────────────────────────────────────────────────────
+    def _get_pin(pid):
+        return next((p for p in st.session_state.pos_pins if p["id"] == pid), None)
+
+    def _save_pin(pin):
+        pins = st.session_state.pos_pins
+        idx  = next((i for i, p in enumerate(pins) if p["id"] == pin["id"]), -1)
+        if idx >= 0: pins[idx] = pin
+        else:        pins.append(pin)
+        st.session_state.pos_pins = pins
+
+    def _del_pin(pid):
+        st.session_state.pos_pins = [p for p in st.session_state.pos_pins if p["id"] != pid]
+        if st.session_state.pos_active_pin_id == pid: st.session_state.pos_active_pin_id = None
+        if st.session_state.pos_edit_pin_id   == pid: st.session_state.pos_edit_pin_id   = None
+
+    def _is_assigned(label):
+        return any(a["position"] == label for a in st.session_state.pos_assignments)
+
+    def _all_posts():
+        if st.session_state.board_loaded and not st.session_state.post_db.empty:
+            return st.session_state.post_db
+        return pd.DataFrame(columns=["id","category_id","title","content","created_at"])
+
+    # ── 헤더 ────────────────────────────────────────────────────────
+    st.markdown("""<div class="pos-root pos-header">
+        <h2>🎬 포지션 배치 관리</h2>
+        <p>배치도 핀을 눌러 포지션 정보를 확인하고, 우측에서 팀원을 배정하세요</p>
+    </div>""", unsafe_allow_html=True)
+
+    col_map, col_right = st.columns([1.6, 1], gap="medium")
+
+    # ════════════════════════════════════════════════════════════════
+    # 좌측: 배치도 + 핀 UI
+    # ════════════════════════════════════════════════════════════════
+    with col_map:
+        fixed_img = st.session_state.pos_fixed_image
+
+        # ── 배치도 미등록 ─────────────────────────────────────────
+        if fixed_img is None:
+            st.markdown("#### 🗺️ 배치도 이미지 등록")
+            st.info("배치도 이미지를 한 장 등록하면 핀을 추가할 수 있습니다.")
+            with st.form("fixed_img_form", clear_on_submit=True):
+                img_label = st.text_input("배치도 이름", placeholder="예) 본당 예배 배치도")
+                img_file  = st.file_uploader("이미지 선택", type=["png","jpg","jpeg","webp"])
+                if st.form_submit_button("📌 배치도 등록", type="primary", use_container_width=True):
+                    if not img_file:
+                        st.error("이미지를 선택해 주세요.")
+                    elif not img_label.strip():
+                        st.error("배치도 이름을 입력해 주세요.")
                     else:
-                        import base64
-                        b64 = base64.b64encode(up_file.getvalue()).decode()
-                        ext = up_file.name.rsplit(".", 1)[-1].lower()
-                        data_url = f"data:image/{ext};base64,{b64}"
-                        new_img = {
-                            "id":    str(int(time.time() * 1000)),
-                            "url":   data_url,
-                            "label": up_label.strip(),
-                            "icons": [],
+                        with st.spinner("업로드 중..."):
+                            url = upload_image_to_storage(img_file)
+                        if not url:
+                            import base64 as _b64
+                            _b  = _b64.b64encode(img_file.getvalue()).decode()
+                            _ex = img_file.name.rsplit(".",1)[-1].lower()
+                            url = f"data:image/{_ex};base64,{_b}"
+                        st.session_state.pos_fixed_image = {
+                            "id": str(int(time.time()*1000)),
+                            "url": url, "label": img_label.strip(),
                         }
-                        st.session_state.pos_map_images.append(new_img)
-                        st.success(f"✅ '{up_label.strip()}' 배치도가 등록되었습니다! (로컬 저장)")
                         st.rerun()
 
-        if not st.session_state.pos_map_images:
-            st.info("📭 등록된 배치도 이미지가 없습니다. 위에서 추가해 주세요.")
+        # ── 배치도 등록됨 ────────────────────────────────────────
         else:
-            for img_item in st.session_state.pos_map_images:
-                img_id    = img_item["id"]
-                img_label = img_item["label"]
-                img_url   = img_item["url"]
-                img_icons = img_item.get("icons", [])
+            # 상단 툴바
+            tb1, tb2, tb3, tb4 = st.columns([3, 1.1, 1.1, 1])
+            with tb1:
+                st.markdown(f"**🗺️ {fixed_img['label']}**")
+            with tb2:
+                add_mode = st.session_state.pos_add_mode
+                if st.button(
+                    "🔴 추가 중" if add_mode else "📍 핀 추가",
+                    type="primary" if add_mode else "secondary",
+                    use_container_width=True, key="toggle_add_mode",
+                ):
+                    st.session_state.pos_add_mode    = not add_mode
+                    st.session_state.pos_edit_pin_id = None
+                    st.rerun()
+            with tb3:
+                if st.button("🖼️ 이미지 변경", use_container_width=True, key="change_img"):
+                    for _k2 in ("pos_fixed_image","pos_pins","pos_active_pin_id","pos_edit_pin_id","pos_add_mode"):
+                        st.session_state[_k2] = None if "image" in _k2 or "id" in _k2 else ([] if "pins" in _k2 else False)
+                    st.rerun()
+            with tb4:
+                st.markdown(
+                    f"<div style='text-align:center;padding:6px 0;font-size:0.75rem;"
+                    f"color:#1e3a5f;font-weight:700;'>핀 {len(st.session_state.pos_pins)}개</div>",
+                    unsafe_allow_html=True
+                )
 
-                with st.container(border=True):
-                    col_title, col_del = st.columns([6, 1])
-                    with col_title:
-                        st.markdown(f"#### 🗺️ {img_label}")
-                    with col_del:
-                        if st.button("🗑️", key=f"del_img_{img_id}", help="이미지 삭제"):
-                            st.session_state.pos_map_images = [
-                                x for x in st.session_state.pos_map_images if x["id"] != img_id
-                            ]
-                            if st.session_state.pos_img_edit_id == img_id:
-                                st.session_state.pos_img_edit_id = None
+            if st.session_state.pos_add_mode:
+                st.markdown('<div class="add-banner">🎯 핀 추가 모드 — 아래 폼에서 포지션 이름과 좌표(%)를 입력하세요</div>', unsafe_allow_html=True)
+
+            # ── 배치도 이미지 + 핀 오버레이 HTML ─────────────────
+            pins      = st.session_state.pos_pins
+            active_id = st.session_state.pos_active_pin_id
+
+            pins_html = ""
+            for pin in pins:
+                assigned  = _is_assigned(pin["label"])
+                is_active = active_id == pin["id"]
+                cls = "active" if is_active else ("assigned" if assigned else "idle")
+                short = pin["label"][:5]
+                pins_html += f"""
+                <div class="pin-outer" style="left:{pin['x']}%;top:{pin['y']}%;">
+                    <div class="pin-circle {cls}">{short}</div>
+                    <div class="pin-needle {cls}"></div>
+                    <div class="pin-label">{pin['label']}</div>
+                </div>"""
+
+            map_html = f"""
+            <div class="pos-root map-outer">
+                <div class="map-stage">⛪ &nbsp; S T A G E &nbsp; ⛪</div>
+                <div class="map-wrap">
+                    <img src="{fixed_img['url']}" alt="{fixed_img['label']}" draggable="false">
+                    {pins_html}
+                </div>
+                <div class="legend">
+                    <div class="legend-item"><div class="legend-dot" style="background:#2563eb;"></div>포지션</div>
+                    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b;"></div>선택됨</div>
+                    <div class="legend-item"><div class="legend-dot" style="background:#16a34a;"></div>배정완료</div>
+                </div>
+            </div>"""
+            st.components.v1.html(map_html, height=500, scrolling=False)
+
+            # ── 핀 버튼 그리드 (클릭 선택) ───────────────────────
+            if pins:
+                st.markdown("**📌 포지션 핀 선택**")
+                _cols_n = 5
+                _rows   = [pins[i:i+_cols_n] for i in range(0, len(pins), _cols_n)]
+                for _row in _rows:
+                    _rcols = st.columns(len(_row))
+                    for _ci, _pin in enumerate(_row):
+                        with _rcols[_ci]:
+                            _assigned = _is_assigned(_pin["label"])
+                            _active   = active_id == _pin["id"]
+                            _icon     = "✅" if _assigned else ("🟠" if _active else "📍")
+                            if st.button(
+                                f"{_icon} {_pin['label']}",
+                                key=f"pb_{_pin['id']}",
+                                use_container_width=True,
+                                type="primary" if _active else "secondary",
+                            ):
+                                st.session_state.pos_active_pin_id = (
+                                    None if _active else _pin["id"]
+                                )
+                                st.session_state.pos_edit_pin_id = None
+                                st.rerun()
+
+            # ── 상세 패널 (토글) ──────────────────────────────────
+            if active_id:
+                ap = _get_pin(active_id)
+                if ap:
+                    assigned_name = next(
+                        (a["name"] for a in st.session_state.pos_assignments
+                         if a["position"] == ap["label"]), None
+                    )
+                    all_p = _all_posts()
+                    linked = []
+                    if not all_p.empty and ap.get("post_ids"):
+                        for _pid in ap["post_ids"]:
+                            _m = all_p[all_p["id"] == _pid]
+                            if not _m.empty: linked.append(_m.iloc[0])
+
+                    with st.container():
+                        st.markdown('<div class="detail-panel">', unsafe_allow_html=True)
+
+                        dh1, dh2 = st.columns([5, 1])
+                        with dh1:
+                            st.markdown(
+                                f"<div class='detail-title'>📍 {ap['label']}</div>"
+                                f"<div class='detail-tag'>위치 ({ap['x']:.1f}%, {ap['y']:.1f}%)</div>",
+                                unsafe_allow_html=True
+                            )
+                        with dh2:
+                            if st.button("✕", key="close_dp", use_container_width=True):
+                                st.session_state.pos_active_pin_id = None
+                                st.rerun()
+
+                        if assigned_name:
+                            st.success(f"✅ 현재 배정: **{assigned_name}**")
+
+                        if ap.get("desc"):
+                            st.markdown(f"<div class='detail-desc'>{ap['desc']}</div>", unsafe_allow_html=True)
+                        else:
+                            st.caption("설명 없음")
+
+                        if ap.get("image_url"):
+                            st.image(ap["image_url"], use_container_width=True)
+
+                        if linked:
+                            st.markdown("**🔗 연결된 게시글**")
+                            for _lp in linked:
+                                if st.button(f"📄 {_lp['title']}", key=f"lp_{_lp['id']}",
+                                             use_container_width=True):
+                                    st.session_state.page         = "🏛️ 팀 커뮤니티 게시판"
+                                    st.session_state.view_post_id = _lp["id"]
+                                    st.rerun()
+                        else:
+                            st.caption("연결된 게시글 없음")
+
+                        de1, de2 = st.columns(2)
+                        if de1.button("✏️ 핀 편집", key="edit_dp", use_container_width=True):
+                            st.session_state.pos_edit_pin_id = active_id
+                            st.rerun()
+                        if de2.button("🗑️ 핀 삭제", key="del_dp",
+                                      type="secondary", use_container_width=True):
+                            _del_pin(active_id)
+                            st.rerun()
+                        st.markdown('</div>', unsafe_allow_html=True)
+
+            # ── 핀 추가 폼 ───────────────────────────────────────
+            if st.session_state.pos_add_mode:
+                st.markdown("---")
+                st.markdown("#### ➕ 새 핀 추가")
+                st.caption("좌상단 (0%,0%) → 우하단 (100%,100%)")
+                with st.form("add_pin_form", clear_on_submit=True):
+                    af1, af2 = st.columns(2)
+                    p_label  = af1.text_input("포지션 이름 *", placeholder="예) 4번 카메라")
+                    p_x      = af2.number_input("X 위치 (%)", 0.0, 100.0, 50.0, 1.0)
+                    af3, af4 = st.columns(2)
+                    p_y      = af3.number_input("Y 위치 (%)", 0.0, 100.0, 50.0, 1.0)
+                    p_desc   = af4.text_area("포지션 설명", placeholder="역할, 장비, 주의사항 등", height=78)
+                    p_img_f  = st.file_uploader("포지션 사진 (선택)", type=["png","jpg","jpeg"], key="pin_img_up")
+
+                    _ap2 = _all_posts()
+                    _post_opts2 = list(_ap2["title"].values) if not _ap2.empty else []
+                    p_posts = st.multiselect("🔗 관련 게시글 연결", _post_opts2, key="pin_post_link2")
+
+                    if st.form_submit_button("📌 핀 등록", type="primary", use_container_width=True):
+                        if not p_label.strip():
+                            st.error("포지션 이름을 입력해 주세요.")
+                        else:
+                            _pu = None
+                            if p_img_f:
+                                _pu = upload_image_to_storage(p_img_f)
+                                if not _pu:
+                                    import base64 as _b64
+                                    _pu = f"data:image/{p_img_f.name.rsplit('.',1)[-1].lower()};base64," + _b64.b64encode(p_img_f.getvalue()).decode()
+                            _ids = []
+                            if not _ap2.empty:
+                                for _t in p_posts:
+                                    _pm = _ap2[_ap2["title"] == _t]
+                                    if not _pm.empty: _ids.append(_pm.iloc[0]["id"])
+                            st.session_state.pos_pins.append({
+                                "id": str(int(time.time()*1000)), "label": p_label.strip(),
+                                "x": p_x, "y": p_y, "desc": p_desc.strip(),
+                                "image_url": _pu, "post_ids": _ids,
+                            })
+                            st.session_state.pos_add_mode = False
+                            st.success(f"✅ '{p_label.strip()}' 핀 등록 완료!")
                             st.rerun()
 
-                    icons_html = ""
-                    for ic in img_icons:
-                        pos_label = ic.get("label") or ic.get("pos", "")
-                        guide     = ic.get("guide", "포지션 안내 문구 없음")
-                        icons_html += f"""
-                        <div class="pos-icon" style="left:{ic['x']}%;top:{ic['y']}%;"
-                             onclick="toggleGuide(this)"
-                             data-guide="{pos_label}: {guide}">
-                            <span class="icon-dot">📍</span>
-                            <span class="icon-label">{pos_label}</span>
-                            <div class="guide-bubble">{pos_label}<br>{guide}</div>
-                        </div>"""
+            # ── 핀 편집 폼 ───────────────────────────────────────
+            epid = st.session_state.pos_edit_pin_id
+            if epid:
+                ep = _get_pin(epid)
+                if ep:
+                    st.markdown("---")
+                    st.markdown(f"#### ✏️ 핀 편집 — {ep['label']}")
+                    with st.form(f"edit_pin_{epid}", clear_on_submit=False):
+                        ef1, ef2 = st.columns(2)
+                        e_label  = ef1.text_input("포지션 이름", value=ep["label"])
+                        e_x      = ef2.number_input("X (%)", 0.0, 100.0, float(ep["x"]), 1.0)
+                        ef3, ef4 = st.columns(2)
+                        e_y      = ef3.number_input("Y (%)", 0.0, 100.0, float(ep["y"]), 1.0)
+                        e_desc   = ef4.text_area("설명", value=ep.get("desc",""), height=78)
+                        e_img_f  = st.file_uploader("사진 변경", type=["png","jpg","jpeg"], key=f"epin_{epid}")
 
-                    html_block = f"""
-                    <style>
-                    .pos-map-wrap {{
-                        position: relative; display: inline-block; width: 100%; max-width: 800px;
-                    }}
-                    .pos-map-wrap img {{
-                        width: 100%; border-radius: 8px; display: block;
-                    }}
-                    .pos-icon {{
-                        position: absolute; transform: translate(-50%, -50%);
-                        cursor: pointer; text-align: center; z-index: 10;
-                    }}
-                    .icon-dot {{ font-size: 1.6rem; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); }}
-                    .icon-label {{
-                        display: block; background: rgba(0,0,0,0.72); color: #fff;
-                        font-size: 0.65rem; border-radius: 4px; padding: 1px 5px; white-space: nowrap;
-                        margin-top: 2px;
-                    }}
-                    .guide-bubble {{
-                        display: none; position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
-                        background: #1e3a5f; color: #fff; border-radius: 8px; padding: 8px 12px;
-                        font-size: 0.82rem; white-space: nowrap; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-                        min-width: 140px; z-index: 100;
-                    }}
-                    .guide-bubble.show {{ display: block; }}
-                    </style>
-                    <div class="pos-map-wrap">
-                        <img src="{img_url}" alt="{img_label}">
-                        {icons_html}
-                    </div>
-                    <script>
-                    function toggleGuide(el) {{
-                        var b = el.querySelector('.guide-bubble');
-                        document.querySelectorAll('.guide-bubble.show').forEach(function(x){{
-                            if (x !== b) x.classList.remove('show');
-                        }});
-                        b.classList.toggle('show');
-                    }}
-                    </script>
-                    """
-                    st.components.v1.html(html_block, height=max(350, 60 + len(img_icons)*0), scrolling=False)
+                        _eap = _all_posts()
+                        _ep_opts = list(_eap["title"].values) if not _eap.empty else []
+                        _ep_def  = []
+                        if not _eap.empty:
+                            for _pid2 in ep.get("post_ids",[]):
+                                _pm2 = _eap[_eap["id"] == _pid2]
+                                if not _pm2.empty: _ep_def.append(_pm2.iloc[0]["title"])
+                        e_posts = st.multiselect("🔗 연결 게시글", _ep_opts, default=_ep_def, key=f"eposts_{epid}")
 
-                    edit_mode = st.session_state.pos_img_edit_id == img_id
-                    if st.button(
-                        "✏️ 아이콘 편집 닫기" if edit_mode else "📍 포지션 아이콘 추가/편집",
-                        key=f"toggle_edit_{img_id}",
-                    ):
-                        st.session_state.pos_img_edit_id = None if edit_mode else img_id
-                        st.rerun()
+                        ec1, ec2 = st.columns(2)
+                        if ec1.form_submit_button("💾 저장", type="primary", use_container_width=True):
+                            _nu = ep.get("image_url")
+                            if e_img_f:
+                                _nu = upload_image_to_storage(e_img_f)
+                                if not _nu:
+                                    import base64 as _b64
+                                    _nu = f"data:image/{e_img_f.name.rsplit('.',1)[-1].lower()};base64," + _b64.b64encode(e_img_f.getvalue()).decode()
+                            _nids = []
+                            if not _eap.empty:
+                                for _t2 in e_posts:
+                                    _pm3 = _eap[_eap["title"] == _t2]
+                                    if not _pm3.empty: _nids.append(_pm3.iloc[0]["id"])
+                            _save_pin({**ep, "label": e_label.strip(), "x": e_x, "y": e_y,
+                                       "desc": e_desc.strip(), "image_url": _nu, "post_ids": _nids})
+                            st.session_state.pos_edit_pin_id   = None
+                            st.session_state.pos_active_pin_id = None
+                            st.success("저장 완료!")
+                            st.rerun()
+                        if ec2.form_submit_button("취소", use_container_width=True):
+                            st.session_state.pos_edit_pin_id = None
+                            st.rerun()
 
-                    if edit_mode:
-                        st.markdown("---")
-                        st.markdown("**📍 새 아이콘 추가**")
-                        st.caption("이미지 좌측 상단을 (0%, 0%), 우측 하단을 (100%, 100%)으로 입력하세요.")
-                        with st.form(f"add_icon_{img_id}", clear_on_submit=True):
-                            ic_col1, ic_col2 = st.columns(2)
-                            ic_x     = ic_col1.number_input("X 위치 (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.5, key=f"icx_{img_id}")
-                            ic_y     = ic_col2.number_input("Y 위치 (%)", min_value=0.0, max_value=100.0, value=50.0, step=0.5, key=f"icy_{img_id}")
-                            ic_label = st.text_input("포지션 명칭 (예: 카메라1, 조명, LED)", key=f"iclabel_{img_id}")
-                            ic_guide = st.text_area("포지션 안내 문구", placeholder="예) 4번 카메라: 무대 정면 촬영 담당", height=80, key=f"icguide_{img_id}")
-                            if st.form_submit_button("➕ 아이콘 추가", type="primary"):
-                                if ic_label.strip():
-                                    for img in st.session_state.pos_map_images:
-                                        if img["id"] == img_id:
-                                            img["icons"].append({
-                                                "x": ic_x, "y": ic_y,
-                                                "label": ic_label.strip(),
-                                                "guide": ic_guide.strip(),
-                                            })
-                                    st.success(f"✅ 아이콘 '{ic_label.strip()}' 추가!")
-                                    st.rerun()
-                                else:
-                                    st.error("포지션 명칭을 입력해 주세요.")
+    # ════════════════════════════════════════════════════════════════
+    # 우측: 날짜·포지션 배정 패널
+    # ════════════════════════════════════════════════════════════════
+    with col_right:
+        st.markdown('<div class="pos-root assign-panel">', unsafe_allow_html=True)
+        st.markdown('<div class="assign-title">📋 날짜 &amp; 포지션 배정</div>', unsafe_allow_html=True)
 
-                        if img_icons:
-                            st.markdown("**현재 등록된 아이콘**")
-                            for i, ic in enumerate(img_icons):
-                                ic_r1, ic_r2, ic_r3 = st.columns([3, 4, 1])
-                                ic_r1.write(f"📍 **{ic.get('label','')}** ({ic['x']}%, {ic['y']}%)")
-                                ic_r2.caption(ic.get("guide", ""))
-                                if ic_r3.button("🗑️", key=f"del_ic_{img_id}_{i}"):
-                                    for img in st.session_state.pos_map_images:
-                                        if img["id"] == img_id:
-                                            img["icons"].pop(i)
-                                    st.rerun()
-
-    with tab_assign:
-        st.subheader("📝 날짜 & 포지션 배정")
-
-        assign_date = st.date_input(
-            "📅 예배 날짜 선택",
-            value=st.session_state.pos_assign_date,
-            key="pos_date_picker",
-        )
+        assign_date = st.date_input("📅 예배 날짜", value=st.session_state.pos_assign_date, key="pos_date_right")
         if assign_date != st.session_state.pos_assign_date:
             st.session_state.pos_assign_date = assign_date
-        st.markdown(f"**선택된 날짜:** `{assign_date.strftime('%Y년 %m월 %d일')} ({['월','화','수','목','금','토','일'][assign_date.weekday()]}요일)`")
-        st.markdown("---")
+        _wd = ["월","화","수","목","금","토","일"][assign_date.weekday()]
+        st.markdown(
+            f"<div style='font-size:0.76rem;color:#64748b;margin:-4px 0 10px;'>"
+            f"{assign_date.strftime('%Y년 %m월 %d일')} ({_wd}요일)</div>",
+            unsafe_allow_html=True
+        )
 
-        hd_col, btn_col = st.columns([3, 1])
-        with btn_col:
-            if st.button("🔄 명단 불러오기", key="pos_reload_members", use_container_width=True):
-                with st.spinner("⏳ 멤버 명단 불러오는 중..."):
+        _rc1, _rc2 = st.columns([2, 1])
+        with _rc2:
+            if st.button("🔄 명단 로드", key="right_reload", use_container_width=True):
+                with st.spinner("..."):
                     load_members_only()
                 st.rerun()
 
-        # FIX #2: members_loaded 기준으로만 판단
-        if not st.session_state.members_loaded or st.session_state.members_db.empty:
-            st.info("👆 오른쪽 버튼을 눌러 구글 시트에서 멤버 명단을 불러오세요.")
+        st.markdown("---")
 
-        st.markdown("#### 👤 팀원 포지션 배정")
+        # 배정 폼 — 활성 핀이 있으면 포지션 자동 선택
+        _apfa = _get_pin(st.session_state.pos_active_pin_id) if st.session_state.pos_active_pin_id else None
+
+        # 포지션 목록: 핀 라벨 + POSITIONS 합집합
+        _pin_labels = [p["label"] for p in st.session_state.pos_pins]
+        _pos_merged = list(dict.fromkeys(POSITIONS + _pin_labels))  # 순서 유지 중복 제거
 
         if st.session_state.members_loaded and not st.session_state.members_db.empty:
-            member_names_pos = list(st.session_state.members_db["name"].values)
-            name_opts = ["선택하세요"] + member_names_pos
-        else:
-            name_opts = None
-
-        with st.form("pos_add_form", clear_on_submit=True):
-            pa_col1, pa_col2 = st.columns(2)
-            if name_opts:
-                chosen_name_pa = pa_col1.selectbox("이름 선택", name_opts, key="pa_name_sel")
+            _nlist = ["선택하세요"] + list(st.session_state.members_db["name"].values)
+            if _apfa and _apfa["label"] in _pos_merged:
+                _auto_idx = _pos_merged.index(_apfa["label"])
             else:
-                chosen_name_pa = "선택하세요"
-                pa_col1.info("명단을 먼저 불러오세요")
+                _auto_idx = 0
 
-            chosen_pos_pa = pa_col2.selectbox("포지션 선택", POSITIONS, key="pa_pos_sel")
+            with st.form("right_assign_form", clear_on_submit=True):
+                _sn = st.selectbox("👤 팀원", _nlist, key="r_name")
+                _sp = st.selectbox("🎥 포지션", _pos_merged, index=_auto_idx, key="r_pos")
+                if _apfa:
+                    st.caption(f"📍 선택된 핀: **{_apfa['label']}**")
+                if st.form_submit_button("➕ 배정", type="primary", use_container_width=True):
+                    if _sn == "선택하세요":
+                        st.error("팀원을 선택하세요.")
+                    elif _sp == "선택 안 함":
+                        st.error("포지션을 선택하세요.")
+                    else:
+                        _ex = [a for a in st.session_state.pos_assignments if a["name"] != _sn]
+                        _ex.append({"name": _sn, "position": _sp})
+                        st.session_state.pos_assignments = _ex
+                        st.success(f"{_sn} → {_sp}")
+                        st.rerun()
+        else:
+            st.info("👆 '명단 로드' 버튼을 눌러주세요.")
 
-            if st.form_submit_button("➕ 배정 추가", type="primary", use_container_width=True):
-                if not name_opts:
-                    st.error("❌ 먼저 멤버 명단을 불러오세요.")
-                elif chosen_name_pa == "선택하세요":
-                    st.error("❌ 이름을 선택해 주세요.")
-                elif chosen_pos_pa == "선택 안 함":
-                    st.error("❌ 포지션을 선택해 주세요.")
-                else:
-                    existing = [a for a in st.session_state.pos_assignments if a["name"] != chosen_name_pa]
-                    existing.append({"name": chosen_name_pa, "position": chosen_pos_pa})
-                    st.session_state.pos_assignments = existing
-                    st.success(f"✅ {chosen_name_pa} → {chosen_pos_pa} 배정 완료!")
-                    st.rerun()
-
+        # 배정 목록
         if st.session_state.pos_assignments:
             st.markdown("---")
-            st.markdown("#### 📋 현재 배정 목록")
-            for i, asgn in enumerate(st.session_state.pos_assignments):
-                a_c1, a_c2, a_c3 = st.columns([3, 3, 1])
-                a_c1.write(f"👤 **{asgn['name']}**")
-                a_c2.write(f"🎥 {asgn['position']}")
-                if a_c3.button("🗑️", key=f"del_asgn_{i}"):
-                    st.session_state.pos_assignments.pop(i)
-                    st.rerun()
-            if st.button("🗑️ 배정 전체 초기화", type="secondary"):
+            _sorted = sorted(
+                st.session_state.pos_assignments,
+                key=lambda x: _pos_merged.index(x["position"]) if x["position"] in _pos_merged else 999
+            )
+            st.markdown(f"**배정 현황 ({len(_sorted)}명)**")
+            for _i, _a in enumerate(_sorted):
+                _ac1, _ac2 = st.columns([4, 1])
+                with _ac1:
+                    st.markdown(
+                        f"<div class='assign-card'>"
+                        f"<div><div class='aname'>{_a['name']}</div>"
+                        f"<div class='apos'>🎥 {_a['position']}</div></div>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                with _ac2:
+                    st.write("")
+                    if st.button("🗑️", key=f"rdel_{_i}", use_container_width=True):
+                        st.session_state.pos_assignments = [
+                            a for a in st.session_state.pos_assignments if a["name"] != _a["name"]
+                        ]
+                        st.rerun()
+
+            st.markdown("---")
+            _date_s   = assign_date.strftime("%Y년 %m월 %d일")
+            _copy_txt = f"📅 {_date_s} ({_wd}요일) 예배 포지션 명단\n\n" + "\n".join(
+                f"• {a['name']} — {a['position']}" for a in _sorted
+            )
+            st.text_area("복사용 텍스트", value=_copy_txt,
+                         height=max(110, 36 + len(_sorted)*24), key="r_copy")
+            _cjs = _copy_txt.replace("\\","\\\\").replace("`","\\`").replace("$","\\$")
+            st.components.v1.html(f"""
+            <button onclick="navigator.clipboard.writeText(`{_cjs}`).then(()=>{{
+                this.textContent='✅ 복사됨!';setTimeout(()=>this.textContent='📋 복사',2000);
+            }})"
+            style="width:100%;background:#1e3a5f;color:#fff;border:none;padding:8px;
+                   border-radius:8px;font-size:0.85rem;cursor:pointer;font-weight:700;">
+            📋 복사</button>""", height=46)
+
+            if st.button("🗑️ 전체 초기화", type="secondary", use_container_width=True, key="r_reset"):
                 st.session_state.pos_assignments = []
                 st.rerun()
-        else:
-            st.info("아직 배정된 팀원이 없습니다. 위 폼에서 추가하세요.")
 
-    with tab_roster:
-        st.subheader("📋 최종 포지션 명단")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        date_str     = st.session_state.pos_assign_date.strftime("%Y년 %m월 %d일")
-        weekday_str  = ["월", "화", "수", "목", "금", "토", "일"][st.session_state.pos_assign_date.weekday()]
-        full_date_str = f"{date_str} ({weekday_str}요일)"
-
-        if not st.session_state.pos_assignments:
-            st.info("📭 배정된 팀원이 없습니다. '날짜·포지션 배정' 탭에서 먼저 배정해 주세요.")
-        else:
-            sorted_asgn = sorted(
-                st.session_state.pos_assignments,
-                key=lambda x: POSITIONS.index(x["position"]) if x["position"] in POSITIONS else 999
-            )
-
-            st.markdown(f"### 📅 {full_date_str} 예배 포지션 명단")
-            st.markdown("---")
-
-            if st.session_state.pos_map_images:
-                img_labels    = ["(배치도 선택 안 함)"] + [img["label"] for img in st.session_state.pos_map_images]
-                sel_img_label = st.selectbox("🗺️ 배치도 이미지 함께 보기", img_labels, key="roster_img_sel")
-                if sel_img_label != "(배치도 선택 안 함)":
-                    sel_img = next((x for x in st.session_state.pos_map_images if x["label"] == sel_img_label), None)
-                    if sel_img:
-                        st.image(sel_img["url"], caption=sel_img["label"], use_container_width=True)
-                st.markdown("---")
-
-            cols_per_row = 3
-            rows = [sorted_asgn[i:i+cols_per_row] for i in range(0, len(sorted_asgn), cols_per_row)]
-            for row in rows:
-                rcols = st.columns(cols_per_row)
-                for ci, asgn in enumerate(row):
-                    with rcols[ci]:
-                        st.markdown(
-                            f"""<div style="background:#1e3a5f;border-radius:10px;padding:14px 16px;margin-bottom:8px;text-align:center;">
-                            <div style="font-size:1.3rem;font-weight:bold;color:#fff;">{asgn['name']}</div>
-                            <div style="font-size:0.95rem;color:#a8d1ff;margin-top:6px;">🎥 {asgn['position']}</div>
-                            </div>""",
-                            unsafe_allow_html=True,
-                        )
-
-            st.markdown("---")
-
-            copy_lines = [f"📅 {full_date_str} 예배 포지션 명단", ""]
-            for asgn in sorted_asgn:
-                copy_lines.append(f"• {asgn['name']} — {asgn['position']}")
-
-            if st.session_state.pos_map_images:
-                sel_label_for_copy = st.session_state.get("roster_img_sel", "(배치도 선택 안 함)")
-                if sel_label_for_copy != "(배치도 선택 안 함)":
-                    sel_img_c = next((x for x in st.session_state.pos_map_images if x["label"] == sel_label_for_copy), None)
-                    if sel_img_c and sel_img_c["url"].startswith("http"):
-                        copy_lines.append("")
-                        copy_lines.append(f"🗺️ 배치도: {sel_img_c['url']}")
-
-            copy_text = "\n".join(copy_lines)
-
-            st.markdown("#### 📋 복사용 텍스트")
-            st.text_area(
-                "아래 텍스트를 복사하여 붙여넣기 하세요",
-                value="\n".join(copy_lines),
-                height=max(150, 60 + len(sorted_asgn) * 28),
-                key="copy_text_area",
-            )
-            copy_js = copy_text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
-            st.components.v1.html(f"""
-            <button onclick="navigator.clipboard.writeText(`{copy_js}`).then(()=>{{
-                this.textContent='✅ 복사 완료!'; setTimeout(()=>this.textContent='📋 클립보드에 복사',2000);
-            }})"
-            style="background:#1e3a5f;color:#fff;border:none;padding:10px 24px;border-radius:8px;
-                   font-size:1rem;cursor:pointer;margin-top:8px;font-weight:bold;">
-            📋 클립보드에 복사</button>
-            """, height=60)
 
 
 # ══════════════════════════════════════════════════════════════════════
