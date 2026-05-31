@@ -443,28 +443,31 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         st.session_state.force_refresh = True
                         st.rerun()
 
+# ══════════════════════════════════════════════════════════════════════
+# 7. 포지션 배치 관리
+# ══════════════════════════════════════════════════════════════════════
+
 elif st.session_state.page == "🎬 포지션 배치 관리":
         st.subheader("🎬 포지션 배치 관리")
         
-        # 1. 이미지 고정 로드
+        # 1. 세션에 이미지 고정 로드
         if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
             try:
-                st.session_state.pos_fixed_image = Image.open("assets/OryunMainHall.png") 
+                # 파일을 열어 메모리에 로드하고 RGB 형식으로 변환하여 세션에 저장
+                with Image.open("assets/OryunMainHall.png") as img:
+                    st.session_state.pos_fixed_image = img.convert('RGB')
             except Exception as e:
-                st.error(f"이미지를 불러올 수 없습니다: {e}")
+                st.error(f"이미지를 불러올 수 없습니다 (경로/파일명 확인): {e}")
 
         fixed_img = st.session_state.get('pos_fixed_image')
 
         if fixed_img is not None:
-            # 이미지 모드 변환 (TypeError 방지)
-            if fixed_img.mode != 'RGB':
-                fixed_img = fixed_img.convert('RGB')
-            
             col_main, col_list = st.columns([3, 1])
             
             with col_main:
                 st.write("이미지를 클릭(터치)하여 핀을 배치하세요.")
                 
+                # 2. 핀 배치 라이브러리 실행 (이미지 데이터 직접 전달)
                 value = streamlit_image_coordinates(
                     fixed_img, 
                     key="map_click",
@@ -475,10 +478,12 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                     st.session_state.pos_click_x = value["x"]
                     st.session_state.pos_click_y = value["y"]
                     
+                    # 핀 설정 폼
                     with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
                         with st.form("pin_add_form"):
                             pin_name = st.text_input("핀 위치 이름")
                             assignee = st.selectbox("담당 포지션", POSITIONS)
+                            
                             if st.form_submit_button("배치 저장"):
                                 new_pin = {
                                     "x": st.session_state.pos_click_x,
@@ -487,10 +492,11 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                                     "position": assignee
                                 }
                                 st.session_state.pos_assignments.append(new_pin)
-                                st.session_state.pos_click_x = None
+                                st.session_state.pos_click_x = None 
                                 st.rerun()
 
             with col_list:
+                # 3. 우측 배정 리스트 (인터파크 예매 스타일)
                 st.markdown("### 📋 현재 배치 현황")
                 if not st.session_state.pos_assignments:
                     st.info("배정된 인원이 없습니다.")
