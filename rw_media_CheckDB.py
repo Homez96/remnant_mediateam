@@ -462,18 +462,20 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
     POSITION_ORDER = ["PD", "TD", "자막", "LED", "4번 카메라", "5번 카메라", "6번 카메라", "7번 카메라", "1~3번 카메라", "노출", "조명", "음향", "FD", "릴스", "사진"]
     
-    # 멤버 데이터 불러오기 (rw_media_CheckDB.py의 st.session_state.members 기준)
+    # 1. 멤버 목록 불러오기 (컬럼명이 'name'인 경우 반영)
     if 'members' in st.session_state and isinstance(st.session_state.members, pd.DataFrame):
-        PEOPLE_LIST = sorted(st.session_state.members['이름'].unique().tolist())
+        # 컬럼명 'name'을 정확히 사용하여 데이터를 가져옵니다.
+        col_name = 'name' if 'name' in st.session_state.members.columns else st.session_state.members.columns[0]
+        PEOPLE_LIST = sorted(st.session_state.members[col_name].dropna().unique().tolist())
     else:
-        PEOPLE_LIST = ["멤버 데이터 없음"]
+        PEOPLE_LIST = ["멤버 없음"]
 
     try:
         pos_img = get_position_image()
         col_main, col_list = st.columns([3, 2])
         
         with col_main:
-            # 핀 그리기 (좌표 오차 방지: 원본 이미지 복사본에 직접 그림)
+            # 2. 이미지 위에 핀 직접 그리기
             display_img = pos_img.copy()
             if st.session_state.get("pos_highlight"):
                 h = st.session_state.pos_highlight
@@ -483,7 +485,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                 draw.ellipse((x-r, y-2*r, x+r, y), fill="red", outline="white", width=2)
                 draw.polygon([(x-r, y-r), (x+r, y-r), (x, y+r)], fill="red", outline="white")
 
-            # [좌표 오차 보정] 너비를 800으로 고정하여 브라우저 리사이징에 의한 오차 제거
+            # 3. 좌표 오차 방지 (width=800 고정)
             val = streamlit_image_coordinates(display_img, key="map_click", width=800) 
             
             if val:
@@ -492,7 +494,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
             with st.expander("📌 선택 위치에 배치하기", expanded=True):
                 with st.form("pin_add_form", clear_on_submit=True):
-                    # [입력 폼 순서 변경] 담당자 -> 포지션 -> 위치 명칭
+                    # 4. 순서 변경: 담당자(name 컬럼 반영) -> 포지션 -> 위치 명칭
                     assignee_name = st.selectbox("담당자 (멤버 목록)", PEOPLE_LIST)
                     position_type = st.selectbox("포지션 선택", POSITION_ORDER)
                     pin_name = st.text_input("위치 상세 명칭")
