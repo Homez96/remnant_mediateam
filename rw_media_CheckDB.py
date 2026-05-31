@@ -451,62 +451,70 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
-    # 1. 이미지 로드 (Secrets URL 우선 사용)
-    if 'pos_fixed_image' not in st.session_state or st.session_state.pos_fixed_image is None:
+    # 1. 이미지 로드 로직
+    if st.session_state.pos_fixed_image is None:
         try:
-            # Secrets에서 URL 가져오기
             image_url = st.secrets["imgbb"]["image_url"]
-            # URL에서 이미지 다운로드 및 객체 변환
-            response = requests.get(image_url, stream=True)
+            response = requests.get(image_url, stream=True, timeout=10)
             img = Image.open(response.raw).convert('RGB')
             st.session_state.pos_fixed_image = img
         except Exception as e:
             st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
             st.stop()
 
-    fixed_img = st.session_state.pos_fixed_image
-
     col_main, col_list = st.columns([3, 1])
     
     with col_main:
-        st.write("이미지를 클릭하여 핀을 배치하세요.")
+        st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
         
-        # 2. 이미지 좌표 라이브러리 실행
-        value = streamlit_image_coordinates(
-            fixed_img, 
+        # 이미지 렌더링 및 좌표 획득
+        val = streamlit_image_coordinates(
+            st.session_state.pos_fixed_image, 
             key="map_click",
             use_container_width=True
         )
         
-        if value:
-            st.session_state.pos_click_x = value["x"]
-            st.session_state.pos_click_y = value["y"]
-            
-            with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
-                with st.form("pin_add_form"):
-                    pin_name = st.text_input("핀 위치 이름")
-                    assignee = st.selectbox("담당 포지션", POSITIONS)
-                    if st.form_submit_button("배치 저장"):
-                        st.session_state.pos_assignments.append({
+        if val:
+            # 클릭한 좌표를 임시 저장
+            st.session_state.pos_click_x = val["x"]
+            st.session_state.pos_click_y = val["y"]
+            st.success(f"좌표 획득: {val['x']}, {val['y']}")
+
+        # 핀 추가 폼
+        with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+            with st.form("pin_add_form", clear_on_submit=True):
+                pin_name = st.text_input("핀 위치 이름 (예: 메인 카메라)")
+                assignee = st.selectbox("담당 포지션", POSITIONS)
+                submitted = st.form_submit_button("배치 저장")
+                
+                if submitted:
+                    if st.session_state.pos_click_x is None:
+                        st.warning("이미지를 먼저 클릭하여 좌표를 선택하세요!")
+                    elif not pin_name:
+                        st.warning("핀 이름을 입력하세요!")
+                    else:
+                        new_pin = {
                             "x": st.session_state.pos_click_x,
                             "y": st.session_state.pos_click_y,
                             "label": pin_name,
                             "position": assignee
-                        })
+                        }
+                        st.session_state.pos_assignments.append(new_pin)
+                        # 좌표 초기화
                         st.session_state.pos_click_x = None
                         st.rerun()
 
-    # 3. 우측 리스트 (기존 코드 유지)
     with col_list:
         st.markdown("### 📋 현재 배치 현황")
         if not st.session_state.pos_assignments:
-            st.info("배정된 인원이 없습니다.")
+            st.info("배정된 핀이 없습니다.")
         else:
             for idx, pin in enumerate(st.session_state.pos_assignments):
                 st.markdown(f"""
-                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:5px;'>
+                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:10px;'>
                     <strong>{pin['label']}</strong><br>
-                    📍 {pin['position']}
+                    <small>좌표: {pin['x']},{pin['y']}</small><br>
+                    📍 <b>{pin['position']}</b>
                 </div>
                 """, unsafe_allow_html=True)
                 if st.button("삭제", key=f"del_pin_{idx}"):
