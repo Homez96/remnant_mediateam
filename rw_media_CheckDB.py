@@ -6,6 +6,15 @@ import requests
 from streamlit_image_coordinates import streamlit_image_coordinates
 from PIL import Image
 
+# 파일 상단에 추가 (import 아래)
+@st.cache_resource
+def get_position_image():
+    image_url = st.secrets["imgbb"]["image_url"]
+    response = requests.get(image_url, stream=True, timeout=10)
+    response.raise_for_status()
+    # BytesIO를 사용하여 메모리상에서 이미지를 안전하게 로드
+    from io import BytesIO
+    return Image.open(BytesIO(response.content)).convert('RGB')
 
 # ══════════════════════════════════════════════════════════════════════
 # 0. 이미지 업로드 (ImgBB)
@@ -452,80 +461,60 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
-    # 1. 이미지 로드 확인
-    if st.session_state.pos_fixed_image is None:
-        try:
-            image_url = st.secrets["imgbb"]["image_url"]
-            response = requests.get(image_url, stream=True, timeout=10)
-            response.raise_for_status() # 에러 체크
-            img = Image.open(response.raw).convert('RGB')
-            st.session_state.pos_fixed_image = img
-        except Exception as e:
-            st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
-            st.stop() # 이미지가 없으면 아래 코드가 실행되지 않게 함
-
-    # 2. 이미지가 확실히 존재하는지 확인 후 컴포넌트 호출
-    if st.session_state.pos_fixed_image is not None:
+    try:
+        # 1. 이미지 로드 (캐시 사용)
+        pos_img = get_position_image()
+        
         col_main, col_list = st.columns([3, 1])
         
         with col_main:
             st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
             
-            # 여기서 에러가 난다면 pos_fixed_image가 PIL Image 객체인지 확인해야 함
+            # 2. 이미지 렌더링
             val = streamlit_image_coordinates(
-                st.session_state.pos_fixed_image, 
+                pos_img, 
                 key="map_click",
                 use_container_width=True
             )
-            # ... 이후 동일 ...
-        
-        if val:
-            # 클릭한 좌표를 임시 저장
-            st.session_state.pos_click_x = val["x"]
-            st.session_state.pos_click_y = val["y"]
-            st.success(f"좌표 획득: {val['x']}, {val['y']}")
+            
+            # 좌표 저장 로직 (val이 None이 아닐 때만)
+            if val:
+                st.session_state.pos_click_x = val["x"]
+                st.session_state.pos_click_y = val["y"]
+                st.success(f"좌표 획득: {val['x']}, {val['y']}")
 
-        # 핀 추가 폼
-        with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
-            with st.form("pin_add_form", clear_on_submit=True):
-                pin_name = st.text_input("핀 위치 이름 (예: 메인 카메라)")
-                assignee = st.selectbox("담당 포지션", POSITIONS)
-                submitted = st.form_submit_button("배치 저장")
-                
-                if submitted:
-                    if st.session_state.pos_click_x is None:
-                        st.warning("이미지를 먼저 클릭하여 좌표를 선택하세요!")
-                    elif not pin_name:
-                        st.warning("핀 이름을 입력하세요!")
-                    else:
-                        new_pin = {
-                            "x": st.session_state.pos_click_x,
-                            "y": st.session_state.pos_click_y,
-                            "label": pin_name,
-                            "position": assignee
-                        }
-                        st.session_state.pos_assignments.append(new_pin)
-                        # 좌표 초기화
-                        st.session_state.pos_click_x = None
-                        st.rerun()
+            # 3. 핀 추가 폼
+            with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+                with st.form("pin_add_form", clear_on_submit=True):
+                    pin_name = st.text_input("핀 위치 이름")
+                    assignee = st.selectbox("담당 포지션", POSITIONS)
+                    submitted = st.form_submit_button("배치 저장")
+                    
+                    if submitted:
+                        if st.session_state.pos_click_x is None:
+                            st.warning("먼저 이미지를 클릭하세요!")
+                        elif not pin_name:
+                            st.warning("이름을 입력하세요!")
+                        else:
+                            st.session_state.pos_assignments.append({
+                                "x": st.session_state.pos_click_x,
+                                "y": st.session_state.pos_click_y,
+                                "label": pin_name,
+                                "position": assignee
+                            })
+                            st.session_state.pos_click_x = None
+                            st.rerun()
 
-    with col_list:
-        st.markdown("### 📋 현재 배치 현황")
-        if not st.session_state.pos_assignments:
-            st.info("배정된 핀이 없습니다.")
-        else:
+        with col_list:
+            st.markdown("### 📋 현재 배치 현황")
             for idx, pin in enumerate(st.session_state.pos_assignments):
-                st.markdown(f"""
-                <div style='border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:10px;'>
-                    <strong>{pin['label']}</strong><br>
-                    <small>좌표: {pin['x']},{pin['y']}</small><br>
-                    📍 <b>{pin['position']}</b>
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button("삭제", key=f"del_pin_{idx}"):
+                st.write(f"**{pin['label']}** ({pin['position']})")
+                if st.button("삭제", key=f"del_{idx}"):
                     st.session_state.pos_assignments.pop(idx)
                     st.rerun()
-                    
+
+    except Exception as e:
+        st.error(f"이미지 로드 실패: {e}")
 # ══════════════════════════════════════════════════════════════════════
 # 8. 팀 커뮤니티 게시판
 # ══════════════════════════════════════════════════════════════════════
