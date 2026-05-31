@@ -448,31 +448,36 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 # 7. 포지션 배치 관리
 # ══════════════════════════════════════════════════════════════════════
 
+# 7. 포지션 배치 관리 (방어 코드 추가)
 elif st.session_state.page == "🎬 포지션 배치 관리":
     st.subheader("🎬 포지션 배치 관리")
 
-    # 1. 이미지 로드 로직
+    # 1. 이미지 로드 확인
     if st.session_state.pos_fixed_image is None:
         try:
             image_url = st.secrets["imgbb"]["image_url"]
             response = requests.get(image_url, stream=True, timeout=10)
+            response.raise_for_status() # 에러 체크
             img = Image.open(response.raw).convert('RGB')
             st.session_state.pos_fixed_image = img
         except Exception as e:
             st.error(f"이미지를 불러오는 중 오류가 발생했습니다: {e}")
-            st.stop()
+            st.stop() # 이미지가 없으면 아래 코드가 실행되지 않게 함
 
-    col_main, col_list = st.columns([3, 1])
-    
-    with col_main:
-        st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
+    # 2. 이미지가 확실히 존재하는지 확인 후 컴포넌트 호출
+    if st.session_state.pos_fixed_image is not None:
+        col_main, col_list = st.columns([3, 1])
         
-        # 이미지 렌더링 및 좌표 획득
-        val = streamlit_image_coordinates(
-            st.session_state.pos_fixed_image, 
-            key="map_click",
-            use_container_width=True
-        )
+        with col_main:
+            st.write("이미지를 클릭하여 핀 좌표를 획득하세요.")
+            
+            # 여기서 에러가 난다면 pos_fixed_image가 PIL Image 객체인지 확인해야 함
+            val = streamlit_image_coordinates(
+                st.session_state.pos_fixed_image, 
+                key="map_click",
+                use_container_width=True
+            )
+            # ... 이후 동일 ...
         
         if val:
             # 클릭한 좌표를 임시 저장
