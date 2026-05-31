@@ -79,6 +79,7 @@ _defaults = {
     "pos_click_y":       None,   # 이미지 클릭으로 얻은 Y%
     "pos_assign_date":   date.today(),
     "pos_assignments":   [],
+    "pos_assignments_by_date": {},  # FIX #1&#2: 날짜별 배치 저장소 {date_str: [assignments]}
     "temp_rx":           None,   # 이미지 클릭 X 비율 (0~1)
     "temp_ry":           None,   # 이미지 클릭 Y 비율 (0~1)
     "pos_highlight":     None,   # 하이라이트할 핀 (rx, ry) 튜플
@@ -509,6 +510,23 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             value=st.session_state.pos_assign_date,
             key="pos_date_input",
         )
+        # FIX #1 & #2: 날짜가 변경되면 현재 배치를 저장하고 새 날짜의 배치를 복원
+        prev_date_str = str(st.session_state.pos_assign_date)
+        new_date_str  = str(pos_date)
+        if prev_date_str != new_date_str:
+            # 이전 날짜의 배치 저장
+            st.session_state.pos_assignments_by_date[prev_date_str] = list(st.session_state.pos_assignments)
+            # 새 날짜의 배치 복원 (없으면 빈 리스트)
+            st.session_state.pos_assignments = list(
+                st.session_state.pos_assignments_by_date.get(new_date_str, [])
+            )
+            st.session_state.pos_assign_date  = pos_date
+            st.session_state.temp_rx          = None
+            st.session_state.temp_ry          = None
+            st.session_state.pos_highlight    = None
+            st.session_state.pos_result_text  = ""
+            st.session_state.pos_click_seq    = st.session_state.get("pos_click_seq", 0) + 1
+            st.rerun()
         st.session_state.pos_assign_date = pos_date
 
     try:
@@ -561,14 +579,22 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         with col_form:
             st.markdown("#### ✏️ 포지션 배치 등록")
 
+            # FIX #3: 이미 배치된 포지션/담당자를 목록에서 숨기기
+            assigned_positions = {p["position"] for p in st.session_state.pos_assignments}
+            assigned_members   = {p["member"]   for p in st.session_state.pos_assignments if p.get("member") and p["member"] != "미배정"}
+            available_positions = [p for p in POSITION_ORDER if p not in assigned_positions]
+            available_members   = [m for m in member_options if m == "미배정" or m not in assigned_members]
+
             if st.session_state.get("temp_rx") is None:
                 st.caption("이미지를 먼저 클릭해야 등록할 수 있습니다.")
-                st.selectbox("포지션", POSITION_ORDER, disabled=True, key="pos_sel_disabled")
-                st.selectbox("담당자", member_options, disabled=True, key="mem_sel_disabled")
+                st.selectbox("포지션", available_positions if available_positions else POSITION_ORDER, disabled=True, key="pos_sel_disabled")
+                st.selectbox("담당자", available_members   if available_members   else member_options,  disabled=True, key="mem_sel_disabled")
                 st.button("✅ 배치 저장", disabled=True, use_container_width=True, key="save_pin_dis")
             else:
-                pin_position = st.selectbox("포지션", POSITION_ORDER, key="pos_sel_active")
-                pin_member   = st.selectbox("담당자", member_options,   key="mem_sel_active")
+                pos_list = available_positions if available_positions else POSITION_ORDER
+                mem_list = available_members   if available_members   else member_options
+                pin_position = st.selectbox("포지션", pos_list, key="pos_sel_active")
+                pin_member   = st.selectbox("담당자", mem_list,  key="mem_sel_active")
 
                 if st.button("✅ 배치 저장", type="primary", use_container_width=True, key="save_pin"):
                     st.session_state.pos_assignments.append({
@@ -577,6 +603,9 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         "position": pin_position,
                         "member":   pin_member,
                     })
+                    # FIX #1&#2: 날짜별 저장소에도 동기화
+                    cur_date_str = str(st.session_state.pos_assign_date)
+                    st.session_state.pos_assignments_by_date[cur_date_str] = list(st.session_state.pos_assignments)
                     # click_seq 증가 → 이미지 위젯 key 변경 → 캐시 클릭값 완전 초기화
                     st.session_state.pos_click_seq = st.session_state.get("pos_click_seq", 0) + 1
                     st.session_state.temp_rx          = None
@@ -591,19 +620,36 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             if not st.session_state.pos_assignments:
                 st.caption("아직 등록된 배치가 없습니다.")
             else:
+                # FIX #4: 스크롤 가능한 고정 높이 컨테이너로 페이지 크기 유지
+                scroll_css = """
+                <style>
+                .assign-scroll {
+                    max-height: 340px;
+                    overflow-y: auto;
+                    padding-right: 4px;
+                }
+                </style>
+                """
+                st.markdown(scroll_css, unsafe_allow_html=True)
+
+                # 배치 현황 HTML 부분 (색상 점 + 텍스트)
+                items_html = "<div class='assign-scroll'>"
                 for idx, pin in enumerate(st.session_state.pos_assignments):
                     color_dot = POSITION_COLORS.get(pin["position"], DEFAULT_PIN_COLOR)
-                    label_html = (
+                    items_html += (
+                        f"<div style='padding:3px 0;'>"
                         f"<span style='display:inline-block;width:10px;height:10px;"
                         f"border-radius:50%;background:{color_dot};margin-right:6px;vertical-align:middle;'></span>"
                         f"<b>{pin['position']}</b> — {pin.get('member','미배정')}"
+                        f"</div>"
                     )
-                    st.markdown(
-                        f"<div style='padding:3px 0;'>{label_html}</div>",
-                        unsafe_allow_html=True,
-                    )
+                items_html += "</div>"
+                st.markdown(items_html, unsafe_allow_html=True)
+
+                # 버튼들은 스크롤 바깥에 (각 항목마다)
+                for idx, pin in enumerate(st.session_state.pos_assignments):
                     c_b, c_d = st.columns([5, 1])
-                    if c_b.button("🔍 지도에서 보기", key=f"hl_{idx}", use_container_width=True):
+                    if c_b.button(f"🔍 {pin['position']} 지도에서 보기", key=f"hl_{idx}", use_container_width=True):
                         st.session_state.pos_highlight = (pin["rx"], pin["ry"])
                         st.rerun()
                     if c_d.button("🗑️", key=f"del_{idx}"):
@@ -640,7 +686,10 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             st.session_state.pos_result_text = "\n".join(lines)
 
         if c_res2.button("🗑️ 배치 전체 초기화", type="secondary", use_container_width=True):
+            cur_date_str = str(st.session_state.pos_assign_date)
             st.session_state.pos_assignments  = []
+            # FIX #1&#2: 현재 날짜 저장소도 초기화
+            st.session_state.pos_assignments_by_date[cur_date_str] = []
             st.session_state.temp_rx          = None
             st.session_state.temp_ry          = None
             st.session_state.pos_highlight    = None
