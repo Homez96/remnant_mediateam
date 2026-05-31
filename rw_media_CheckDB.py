@@ -494,23 +494,36 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
 
             with st.expander("📌 선택 위치에 배치하기", expanded=True):
                 with st.form("pin_add_form", clear_on_submit=True):
-                    # 4. 순서 변경: 담당자(name 컬럼 반영) -> 포지션 -> 위치 명칭
-                    assignee_name = st.selectbox("담당자 (멤버 목록)", PEOPLE_LIST)
-                    position_type = st.selectbox("포지션 선택", POSITION_ORDER)
-                    pin_name = st.text_input("위치 상세 명칭")
                     
-                    if st.form_submit_button("배치 저장"):
-                        if st.session_state.temp_x is None:
-                            st.warning("이미지를 먼저 클릭하세요!")
-                        else:
-                            st.session_state.pos_assignments.append({
-                                "x": st.session_state.temp_x, "y": st.session_state.temp_y,
-                                "label": pin_name, "position": position_type, "name": assignee_name
-                            })
-                            st.session_state.temp_x = None
-                            st.rerun()
+            # 📌 핀 등록 폼 (497~513줄 대체)
+with st.expander("📌 선택 위치에 핀 등록하기", expanded=True):
+    with st.form("pin_add_form", clear_on_submit=True):
+        pin_name = st.text_input("위치 명칭")
+        assignee = st.selectbox("포지션 선택", POSITION_ORDER)
 
-        with col_list:
+        # ✅ 추가: 예배 출석 관리의 멤버 명단 가져오기
+        members = st.session_state.members_db
+        if not members.empty:
+            member_options = ["미배정"] + list(members["name"].values)
+        else:
+            member_options = ["미배정"]
+        assigned_member = st.selectbox("담당자 선택", member_options)
+
+        if st.form_submit_button("현재 위치에 배치 저장"):
+            if st.session_state.temp_x is None:
+                st.warning("먼저 이미지를 클릭하세요!")
+            elif not pin_name:
+                st.warning("위치 명칭을 입력하세요!")
+            else:
+                st.session_state.pos_assignments.append({
+                    "x": st.session_state.temp_x, "y": st.session_state.temp_y,
+                    "label": pin_name,
+                    "position": assignee,
+                    "member": assigned_member  # ✅ 추가
+                })
+                st.session_state.temp_x = None
+                st.rerun()
+                
             st.markdown("### 📋 현재 배치 현황")
             for idx, pin in enumerate(st.session_state.pos_assignments):
                 col_btn, col_del = st.columns([4, 1])
