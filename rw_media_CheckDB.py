@@ -243,28 +243,28 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════
 # 5. 홈 대시보드
 # ══════════════════════════════════════════════════════════════════════
-if st.session_state.page == "🏠 홈 (대시보드)":
-    st.title("🏠 RW 미디어팀 시스템")
+if st.session_state.page == "🏠 홈":
+    st.title("🏠 RW 미디어팀 예배 시스템")
     st.markdown("---")
-    st.subheader("👋 반갑습니다!")
-    st.info("원하시는 작업을 선택한 후 이동하여 데이터를 불러와 주세요!")
+    st.subheader("하나님이 함께 하시니 강하고 담대하라!")
+    st.info("RW 미디어팀 예배 시스템입니다! 필요한 메뉴를 선택하세요.")
     st.write("")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown("### 📋 출석부 기록/수정")
-        st.write("미디어팀원들의 예배 출석 상태 및 포지션 배정, 식사 여부를 관리합니다.")
-        if st.button("🚀 예배 출석 관리 바로가기", use_container_width=True, type="primary"):
+        st.markdown("### 📋 미디어팀 출석 체크")
+        st.write("예배 출석 체크 및 식사 여부")
+        if st.button("🚀 미디어팀 출석 체크 관리 바로가기", use_container_width=True, type="primary"):
             st.session_state.page = "⛪ 예배 출석 관리"
             st.rerun()
     with c2:
         st.markdown("### 🎬 포지션 배치 관리")
-        st.write("배치도 이미지를 관리하고 날짜별 팀원 포지션 배치 명단을 생성·공유합니다.")
+        st.write("날짜별 포지션을 입력해 배치하기")
         if st.button("🚀 포지션 배치 관리 바로가기", use_container_width=True, type="primary"):
             st.session_state.page = "🎬 포지션 배치 관리"
             st.rerun()
     with c3:
-        st.markdown("### 🏛️ 팀 커뮤니티 게시판")
-        st.write("공지사항 공유, 카테고리별 게시글 작성 및 댓글 소통 공간입니다.")
+        st.markdown("### 🏛️ 커뮤니티 게시판")
+        st.write("공지사항 공유, 게시글 작성 및 댓글 소통 공간입니다.")
         if st.button("🚀 팀 커뮤니티 게시판 바로가기", use_container_width=True, type="primary"):
             st.session_state.page = "🏛️ 팀 커뮤니티 게시판"
             st.rerun()
@@ -272,8 +272,8 @@ if st.session_state.page == "🏠 홈 (대시보드)":
 # ══════════════════════════════════════════════════════════════════════
 # 6. 예배 출석 관리
 # ══════════════════════════════════════════════════════════════════════
-elif st.session_state.page == "⛪ 예배 출석 관리":
-    st.header("⛪ 예배 출석 관리")
+elif st.session_state.page == "⛪ 미디어팀 출석 체크":
+    st.header("⛪ 미디어팀 출석 체크")
 
     # FIX #2: attend_loaded 기준으로 판단
     if not st.session_state.attend_loaded:
@@ -291,14 +291,14 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
             st.session_state.selected_date_val = selected_date
             st.session_state.current_filter    = "전체"
 
-        tab_att, tab_mem = st.tabs(["📋 출석 체크", "👥 예배자 관리"])
+        tab_att, tab_mem = st.tabs(["📋 출석 체크", "👥 인원 관리"])
 
         with tab_att:
             m_df = st.session_state.members_db.copy()
             a_df = st.session_state.attend_db.copy()
 
             if m_df.empty:
-                st.info("등록된 예배자가 없습니다.")
+                st.info("등록된 사람이 없습니다.")
             else:
                 curr_a = a_df[a_df["date"] == date_key] if not a_df.empty else pd.DataFrame()
                 if not curr_a.empty:
@@ -411,7 +411,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 
             with m_tab1:
                 with st.form("add_m"):
-                    n_n = st.text_input("새로운 예배자 이름 *")
+                    n_n = st.text_input("신규 인원 이름 *")
                     n_p = st.selectbox("포지션 선택", POSITIONS)
                     if st.form_submit_button("예배자 신규 등록"):
                         if not require_conn(): st.stop()
@@ -429,13 +429,13 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 
             with m_tab2:
                 if not st.session_state.members_db.empty:
-                    edit_tgt = st.selectbox("수정할 대상 선택", st.session_state.members_db["name"].values, key="ed_t")
+                    edit_tgt = st.selectbox("수정할 인원 선택", st.session_state.members_db["name"].values, key="ed_t")
                     tgt_row  = st.session_state.members_db[st.session_state.members_db["name"] == edit_tgt].iloc[0]
                     with st.form("edit_m"):
                         e_n = st.text_input("이름 수정", value=tgt_row["name"])
                         e_p = st.selectbox("포지션 수정", POSITIONS,
                                            index=POSITIONS.index(tgt_row["position"]) if tgt_row["position"] in POSITIONS else 0)
-                        if st.form_submit_button("정보 수정 완료"):
+                        if st.form_submit_button("정보 수정 완료!"):
                             if not require_conn(): st.stop()
                             updated = st.session_state.members_db.copy()
                             idx = updated[updated["id"] == tgt_row["id"]].index[0]
@@ -449,8 +449,8 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 
             with m_tab3:
                 if not st.session_state.members_db.empty:
-                    del_tgt = st.selectbox("삭제할 대상 선택", st.session_state.members_db["name"].values, key="del_t")
-                    if st.button("❌ 선택한 예배자 최종 삭제", type="secondary"):
+                    del_tgt = st.selectbox("삭제할 인원 선택", st.session_state.members_db["name"].values, key="del_t")
+                    if st.button("❌ 선택한 인원 최종 삭제하시겠습니까?", type="secondary"):
                         if not require_conn(): st.stop()
                         updated = st.session_state.members_db[st.session_state.members_db["name"] != del_tgt].sort_values("name").reset_index(drop=True)
                         conn.update(spreadsheet=SHEET_URL, worksheet="members", data=pd.DataFrame(updated, columns=["id","name","position"]))
