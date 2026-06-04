@@ -353,21 +353,17 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                         chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
                         user_row    = merged[merged["name"] == chosen_name].iloc[0]
 
-                        base_pos = str(user_row["position"]).strip()
-                        pos_idx  = POSITIONS.index(base_pos) if base_pos in POSITIONS else 0
-                        chosen_position = st.selectbox("🎥 2. 오늘 담당 포지션 선택", POSITIONS, index=pos_idx)
-
                         STATUS_OPTIONS = ["출석", "지각", "결석", "미체크"]
                         base_status    = str(user_row["status"]).strip()
                         status_idx     = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
-                        chosen_status  = st.selectbox("📊 3. 출석 상태 변경", STATUS_OPTIONS, index=status_idx)
+                        chosen_status  = st.selectbox("📊 2. 출석 상태 변경", STATUS_OPTIONS, index=status_idx)
 
                         chosen_reason = st.text_input(
-                            "📝 4. 특이사항 / 사유 입력",
+                            "📝 3. 특이사항 / 사유 입력",
                             value=str(user_row["reason"]).strip(),
                             placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.",
                         )
-                        chosen_meal = st.checkbox("🍴 5. 오늘 식사 신청 여부", value=bool(user_row["meal"]))
+                        chosen_meal = st.checkbox("🍴 4. 오늘 식사 신청 여부", value=bool(user_row["meal"]))
 
                         st.write("")
                         save_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
