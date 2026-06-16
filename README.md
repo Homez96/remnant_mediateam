@@ -1,5 +1,7 @@
 # remnant_mediateam
 
+# https://rw-checkup.streamlit.app/
+
 #채널 목록 순서 바꿀 수 있도록(드래그로) - 미완
 
 #새 글 작성 기능은 채널에 들어갔을 때 있도록
