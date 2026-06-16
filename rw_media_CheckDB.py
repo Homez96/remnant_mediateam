@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 from datetime import date, datetime
 import time
 import requests
@@ -12,8 +13,6 @@ def get_position_image():
     image_url = st.secrets["imgbb"]["image_url"]
     response = requests.get(image_url, stream=True, timeout=10)
     response.raise_for_status()
-    # BytesIO를 사용하여 메모리상에서 이미지를 안전하게 로드
-    from io import BytesIO
     return Image.open(BytesIO(response.content)).convert('RGB')
 
 # ══════════════════════════════════════════════════════════════════════
@@ -24,7 +23,7 @@ UPLOAD_URL = "https://api.imgbb.com/1/upload"
 def upload_image_to_storage(file_buffer):
     try:
         api_key = st.secrets["imgbb"]["api_key"]
-    except Exception:
+    except KeyError:
         st.warning("⚠️ ImgBB API Key가 secrets.toml에 없습니다. 이미지 업로드를 건너뜁니다.")
         return None
     try:
@@ -34,10 +33,12 @@ def upload_image_to_storage(file_buffer):
             files={"image": (file_buffer.name, file_buffer.getvalue())},
             timeout=20,
         )
-        if response.status_code == 200:
-            return response.json()["data"]["url"]
-    except Exception:
-        pass
+        response.raise_for_status()
+        return response.json()["data"]["url"]
+    except requests.RequestException as e:
+        st.warning(f"⚠️ 이미지 업로드 실패: {e}")
+    except (KeyError, ValueError):
+        st.warning("⚠️ 이미지 업로드 응답 파싱 실패.")
     return None
 
 # ══════════════════════════════════════════════════════════════════════
@@ -55,7 +56,6 @@ _defaults = {
     "cat_db":            pd.DataFrame(columns=["id", "name", "parent_id"]),
     "post_db":           pd.DataFrame(columns=["id", "category_id", "title", "content", "links", "image_urls", "created_at"]),
     "comm_db":           pd.DataFrame(columns=["id", "post_id", "author", "content", "created_at"]),
-    # FIX #2: att_loaded → members_loaded / attend_loaded 로 분리
     "members_loaded":    False,
     "attend_loaded":     False,
     "board_loaded":      False,
@@ -69,23 +69,23 @@ _defaults = {
     "show_add_ch":       False,
     "show_add_sc":       False,
     # 포지션 배치 관리
-    "pos_fixed_image":   None,   # {"id","url","label"} 또는 None (현재 활성 이미지)
-    "pos_images":        [],     # [{"id","url","label","pins":[...]}] — 업로드된 이미지 목록
-    "pos_pins":          [],     # 현재 활성 이미지의 핀 목록 (pos_images에서 동기화)
+    "pos_fixed_image":   None,
+    "pos_images":        [],
+    "pos_pins":          [],
     "pos_active_pin_id": None,
     "pos_edit_pin_id":   None,
-    "pos_add_mode":      False,  # True이면 이미지 클릭 → 핀 좌표 자동 입력
-    "pos_click_x":       None,   # 이미지 클릭으로 얻은 X%
-    "pos_click_y":       None,   # 이미지 클릭으로 얻은 Y%
+    "pos_add_mode":      False,
+    "pos_click_x":       None,
+    "pos_click_y":       None,
     "pos_assign_date":   date.today(),
     "pos_assignments":   [],
-    "pos_assignments_by_date": {},  # FIX #1&#2: 날짜별 배치 저장소 {date_str: [assignments]}
-    "temp_rx":           None,   # 이미지 클릭 X 비율 (0~1)
-    "temp_ry":           None,   # 이미지 클릭 Y 비율 (0~1)
-    "pos_highlight":     None,   # 하이라이트할 핀 (rx, ry) 튜플
-    "pos_result_text":   "",     # 결과 생성 텍스트 (rerun 후에도 유지)
-    "pos_members_tried": False,  # 포지션 탭 멤버 로드 1회 시도 플래그
-    "pos_click_seq":     0,      # 이미지 위젯 key 순번 (저장 후 캐시 초기화용)
+    "pos_assignments_by_date": {},
+    "temp_rx":           None,
+    "temp_ry":           None,
+    "pos_highlight":     None,
+    "pos_result_text":   "",
+    "pos_members_tried": False,
+    "pos_click_seq":     0,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -115,13 +115,21 @@ def require_conn() -> bool:
     return True
 
 def get_ttl() -> int:
-    # FIX #1: force_refresh 플래그를 여기서 소비하지 않음 — 로드 함수 안에서만 리셋
+    """force_refresh 시 TTL=1(즉시 만료), 아니면 10분 캐시."""
     return 1 if st.session_state.force_refresh else 600
+
+def _build_conn_data(worksheet_defs: dict) -> dict:
+    """여러 워크시트를 한 번에 읽어 dict로 반환. worksheet_defs = {key: worksheet_name}"""
+    ttl = get_ttl()
+    return {key: conn.read(spreadsheet=SHEET_URL, worksheet=ws, ttl=ttl)
+            for key, ws in worksheet_defs.items()}
 
 def clean_id(val) -> str:
     if pd.isna(val): return ""
     s = str(val).strip()
     return s[:-2] if s.endswith(".0") else s
+
+_ID_COLS = {"id", "post_id", "category_id", "parent_id"}
 
 def clean_df(df, schema: dict) -> pd.DataFrame:
     if df is None or df.empty:
@@ -131,7 +139,7 @@ def clean_df(df, schema: dict) -> pd.DataFrame:
     for col, dtype in schema.items():
         if col not in df.columns:
             continue
-        if col in ("id", "post_id", "category_id", "parent_id"):
+        if col in _ID_COLS:
             df[col] = df[col].apply(clean_id)
         elif dtype == "str":
             df[col] = df[col].astype(str).replace({"nan": "", "None": ""}).str.strip()
@@ -142,15 +150,12 @@ def clean_df(df, schema: dict) -> pd.DataFrame:
 def load_attendance_data():
     if not require_conn(): return
     try:
-        ttl = get_ttl()
-        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members",    ttl=ttl)
-        df_a = conn.read(spreadsheet=SHEET_URL, worksheet="attendance", ttl=ttl)
-        st.session_state.members_db   = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-        st.session_state.attend_db    = clean_df(df_a, {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
-        # FIX #2: 두 플래그 모두 설정
+        data = _build_conn_data({"members": "members", "attendance": "attendance"})
+        st.session_state.members_db   = clean_df(data["members"], {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.attend_db    = clean_df(data["attendance"], {"date":"str","id":"str","status":"str","meal":"bool","reason":"str"})
         st.session_state.members_loaded = True
         st.session_state.attend_loaded  = True
-        st.session_state.force_refresh  = False  # FIX #1: 로드 완료 후에만 리셋
+        st.session_state.force_refresh  = False
     except Exception as e:
         msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"출석 로드 실패: {e}"
         st.error(msg)
@@ -160,9 +165,9 @@ def load_members_only():
     if not require_conn():
         return False
     try:
-        df_m = conn.read(spreadsheet=SHEET_URL, worksheet="members", ttl=get_ttl())
-        st.session_state.members_db     = clean_df(df_m, {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-        st.session_state.members_loaded = True  # FIX #2: members_loaded만 설정 (attend_loaded는 건드리지 않음)
+        data = _build_conn_data({"members": "members"})
+        st.session_state.members_db     = clean_df(data["members"], {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+        st.session_state.members_loaded = True
         st.session_state.force_refresh  = False
         return True
     except Exception as e:
@@ -173,21 +178,20 @@ def load_community_data():
     if not require_conn(): return
     with st.spinner("⏳ 게시판 데이터 불러오는 중..."):
         try:
-            ttl = get_ttl()
-            df_m  = conn.read(spreadsheet=SHEET_URL, worksheet="members",    ttl=ttl)
-            df_c  = conn.read(spreadsheet=SHEET_URL, worksheet="categories", ttl=ttl)
-            df_p  = conn.read(spreadsheet=SHEET_URL, worksheet="posts",      ttl=ttl)
-            df_cm = conn.read(spreadsheet=SHEET_URL, worksheet="comments",   ttl=ttl)
-            st.session_state.members_db = clean_df(df_m,  {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
-            cat_db = clean_df(df_c, {"id":"str","name":"str","parent_id":"str"})
+            data = _build_conn_data({
+                "members": "members", "categories": "categories",
+                "posts": "posts",     "comments": "comments",
+            })
+            st.session_state.members_db = clean_df(data["members"], {"id":"str","name":"str","position":"str"}).sort_values("name").reset_index(drop=True)
+            cat_db = clean_df(data["categories"], {"id":"str","name":"str","parent_id":"str"})
             if "parent_id" not in cat_db.columns:
                 cat_db["parent_id"] = ""
             st.session_state.cat_db      = cat_db
-            st.session_state.post_db     = clean_df(df_p,  {"id":"str","category_id":"str","title":"str","content":"str","links":"str","image_urls":"str","created_at":"str"})
-            st.session_state.comm_db     = clean_df(df_cm, {"id":"str","post_id":"str","author":"str","content":"str","created_at":"str"})
+            st.session_state.post_db     = clean_df(data["posts"],     {"id":"str","category_id":"str","title":"str","content":"str","links":"str","image_urls":"str","created_at":"str"})
+            st.session_state.comm_db     = clean_df(data["comments"],  {"id":"str","post_id":"str","author":"str","content":"str","created_at":"str"})
             st.session_state.board_loaded   = True
-            st.session_state.members_loaded = True  # FIX #2
-            st.session_state.force_refresh  = False  # FIX #1
+            st.session_state.members_loaded = True
+            st.session_state.force_refresh  = False
         except Exception as e:
             msg = "🛑 구글 제한이 걸렸습니다. 잠시 후 다시 시도해 주세요." if "429" in str(e) else f"게시판 로드 실패: {e}"
             st.error(msg)
@@ -243,7 +247,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════════
 # 5. 홈 대시보드
 # ══════════════════════════════════════════════════════════════════════
-if st.session_state.page == "🏠 홈":
+if st.session_state.page == "🏠 홈 (대시보드)":
     st.title("🏠 RW 미디어팀 예배 시스템")
     st.markdown("---")
     st.subheader("하나님이 함께 하시니 강하고 담대하라!")
@@ -272,10 +276,9 @@ if st.session_state.page == "🏠 홈":
 # ══════════════════════════════════════════════════════════════════════
 # 6. 예배 출석 관리
 # ══════════════════════════════════════════════════════════════════════
-elif st.session_state.page == "⛪ 미디어팀 출석 체크":
-    st.header("⛪ 미디어팀 출석 체크")
+elif st.session_state.page == "⛪ 예배 출석 관리":
+    st.header("⛪ 예배 출석 관리")
 
-    # FIX #2: attend_loaded 기준으로 판단
     if not st.session_state.attend_loaded:
         st.warning("⚠️ 구글 시트에서 출석 데이터를 가져오기 전입니다.")
         if st.button("🔄 출석 데이터 불러오기", type="primary", use_container_width=True):
@@ -303,6 +306,15 @@ elif st.session_state.page == "⛪ 미디어팀 출석 체크":
                 curr_a = a_df[a_df["date"] == date_key] if not a_df.empty else pd.DataFrame()
                 if not curr_a.empty:
                     merged = pd.merge(m_df, curr_a, on="id", how="left")
+                    # merge 후 name_x/name_y 충돌 방지
+                    if "name_x" in merged.columns:
+                        merged = merged.rename(columns={"name_x": "name"})
+                        if "name_y" in merged.columns:
+                            merged = merged.drop(columns=["name_y"])
+                    if "position_x" in merged.columns:
+                        merged = merged.rename(columns={"position_x": "position"})
+                        if "position_y" in merged.columns:
+                            merged = merged.drop(columns=["position_y"])
                 else:
                     merged = m_df.copy()
                     for col in ("status", "meal", "reason"):
@@ -311,6 +323,9 @@ elif st.session_state.page == "⛪ 미디어팀 출석 체크":
                 merged["status"] = merged["status"].fillna("미체크")
                 merged["meal"]   = merged["meal"].fillna(False)
                 merged["reason"] = merged["reason"].fillna("")
+                if "position" not in merged.columns:
+                    merged["position"] = "선택 안 함"
+                merged["position"] = merged["position"].fillna("선택 안 함")
 
                 p_c = (merged["status"] == "출석").sum()
                 l_c = (merged["status"] == "지각").sum()
@@ -364,6 +379,12 @@ elif st.session_state.page == "⛪ 미디어팀 출석 체크":
                             placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.",
                         )
                         chosen_meal = st.checkbox("🍴 4. 오늘 식사 신청 여부", value=bool(user_row["meal"]))
+                        chosen_position = st.selectbox(
+                            "🎬 5. 포지션 (선택)",
+                            POSITIONS,
+                            index=POSITIONS.index(str(user_row.get("position", "선택 안 함")).strip())
+                            if str(user_row.get("position", "")).strip() in POSITIONS else 0,
+                        )
 
                         st.write("")
                         save_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
@@ -396,7 +417,7 @@ elif st.session_state.page == "⛪ 미디어팀 출석 체크":
                                 "meal":   chosen_meal,
                             }])
                             new_db    = pd.concat([remain, new_record], ignore_index=True)
-                            upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"])
+                            upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"]).astype(str)
                             conn.update(spreadsheet=SHEET_URL, worksheet="attendance", data=upload_df)
 
                             st.session_state.attend_db     = upload_df
@@ -506,7 +527,6 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             value=st.session_state.pos_assign_date,
             key="pos_date_input",
         )
-        # FIX #1 & #2: 날짜가 변경되면 현재 배치를 저장하고 새 날짜의 배치를 복원
         prev_date_str = str(st.session_state.pos_assign_date)
         new_date_str  = str(pos_date)
         if prev_date_str != new_date_str:
@@ -575,7 +595,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         with col_form:
             st.markdown("#### ✏️ 포지션 배치 등록")
 
-            # FIX #3: 이미 배치된 포지션/담당자를 목록에서 숨기기
+            # 이미 배치된 포지션/담당자를 목록에서 숨기기
             assigned_positions = {p["position"] for p in st.session_state.pos_assignments}
             assigned_members   = {p["member"]   for p in st.session_state.pos_assignments if p.get("member") and p["member"] != "미배정"}
             available_positions = [p for p in POSITION_ORDER if p not in assigned_positions]
@@ -599,7 +619,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
                         "position": pin_position,
                         "member":   pin_member,
                     })
-                    # FIX #1&#2: 날짜별 저장소에도 동기화
+                    # 날짜별 저장소에도 동기화
                     cur_date_str = str(st.session_state.pos_assign_date)
                     st.session_state.pos_assignments_by_date[cur_date_str] = list(st.session_state.pos_assignments)
                     # click_seq 증가 → 이미지 위젯 key 변경 → 캐시 클릭값 완전 초기화
@@ -616,7 +636,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
             if not st.session_state.pos_assignments:
                 st.caption("아직 등록된 배치가 없습니다.")
             else:
-                # FIX #4: 스크롤 가능한 고정 높이 컨테이너로 페이지 크기 유지
+                # 스크롤 가능한 고정 높이 컨테이너로 페이지 크기 유지
                 scroll_css = """
                 <style>
                 .assign-scroll {
@@ -684,7 +704,7 @@ elif st.session_state.page == "🎬 포지션 배치 관리":
         if c_res2.button("🗑️ 배치 전체 초기화", type="secondary", use_container_width=True):
             cur_date_str = str(st.session_state.pos_assign_date)
             st.session_state.pos_assignments  = []
-            # FIX #1&#2: 현재 날짜 저장소도 초기화
+            # 현재 날짜 저장소도 초기화
             st.session_state.pos_assignments_by_date[cur_date_str] = []
             st.session_state.temp_rx          = None
             st.session_state.temp_ry          = None
@@ -773,7 +793,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
             return full_p_db[full_p_db["category_id"].isin([ch_id_l] + sub_ids)]
 
         def save_categories(new_cat_df):
-            # FIX #7: require_conn() 체크 추가
+            # require_conn() 체크 추가
             if not require_conn():
                 return False
             conn.update(
@@ -807,7 +827,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 st.session_state.sel_sub_cat_id  = None
                 st.session_state.comm_write_mode = False
                 st.session_state.view_post_id    = None
-                # FIX #5: 채널 전환 시 폴더 추가창 닫기
+                # 채널 전환 시 폴더 추가창 닫기
                 st.session_state.show_add_sc     = False
                 st.rerun()
 
@@ -865,12 +885,12 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         non_ch = st.session_state.cat_db[st.session_state.cat_db["parent_id"] != ""]
                         new_cat_df = pd.concat([new_channels_df, non_ch], ignore_index=True)
 
-                        if save_categories(new_cat_df):  # FIX #7: 반환값 확인
+                        # if save_categories(new_cat_df):  반환값 확인
+                        if save_categories(new_cat_df):
                             st.session_state.sel_channel_id  = new_sel_id
                             st.session_state.sel_sub_cat_id  = None
                             st.session_state.comm_write_mode = False
                             st.session_state.view_post_id    = None
-                            # FIX #5
                             st.session_state.show_add_sc     = False
                             st.rerun()
 
@@ -979,7 +999,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     type="primary" if is_all_sc else "secondary",
                 ):
                     st.session_state.sel_sub_cat_id  = None
-                    # FIX #3: 폴더 전환 시 글쓰기 모드 리셋
+                    # 폴더 전환 시 글쓰기 모드 리셋
                     st.session_state.comm_write_mode = False
                     st.rerun()
 
@@ -992,7 +1012,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         type="primary" if is_active else "secondary",
                     ):
                         st.session_state.sel_sub_cat_id  = sc["id"]
-                        # FIX #3: 폴더 전환 시 글쓰기 모드 리셋
+                        # 폴더 전환 시 글쓰기 모드 리셋
                         st.session_state.comm_write_mode = False
                         st.rerun()
 
@@ -1108,7 +1128,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
 
             # ── 게시글 상세 ─────────────────────────────────────────
             elif st.session_state.view_post_id is not None:
-                # FIX #4: view_post_id를 clean_id로 정규화해서 비교
+                # view_post_id를 clean_id로 정규화해서 비교
                 pid = clean_id(str(st.session_state.view_post_id))
 
                 if st.button("⬅️ 목록으로 돌아가기", key="back_from_detail"):
@@ -1173,13 +1193,9 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                 # 댓글
                 st.markdown("**💬 댓글**")
                 comm_db = st.session_state.comm_db.copy()
-                # FIX #6: clean_id 한 번만 적용 (로드 시 이미 처리됨)
-                current_post_id = pid  # 이미 위에서 clean_id 처리됨
+                current_post_id = pid  # load_community_data에서 이미 clean_id 처리됨
 
-                if not comm_db.empty:
-                    p_comms = comm_db[comm_db["post_id"] == current_post_id]
-                else:
-                    p_comms = pd.DataFrame()
+                p_comms = comm_db[comm_db["post_id"] == current_post_id] if not comm_db.empty else pd.DataFrame()
 
                 if p_comms.empty:
                     st.caption("아직 작성된 댓글이 없습니다.")
@@ -1304,6 +1320,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                     else:
                         st.info("📭 이 채널에 아직 게시글이 없습니다. 폴더(파트)를 만들거나 새 글을 작성해 보세요!")
                 else:
+                    comm_db_loop = st.session_state.comm_db
                     for _, post in display_posts[::-1].iterrows():
                         p_cat = st.session_state.cat_db[st.session_state.cat_db["id"] == post["category_id"]]
                         if not p_cat.empty:
@@ -1317,10 +1334,10 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                         else:
                             cat_label = "미분류"
 
-                        comm_db_tmp = st.session_state.comm_db.copy()
-                        if not comm_db_tmp.empty:
+                        comm_db_loop = comm_db_loop
+                        if not comm_db_loop.empty:
                             post_id_clean = clean_id(str(post["id"]))
-                            c_cnt = len(comm_db_tmp[comm_db_tmp["post_id"] == post_id_clean])
+                            c_cnt = len(comm_db_loop[comm_db_loop["post_id"] == post_id_clean])
                         else:
                             c_cnt = 0
 
@@ -1340,7 +1357,7 @@ elif st.session_state.page == "🏛️ 팀 커뮤니티 게시판":
                             with col_open:
                                 st.write("")
                                 if st.button("열기 →", key=f"goto_{post['id']}", use_container_width=True):
-                                    # FIX #4: 저장 시 clean_id 적용
+                                    # 저장 시 clean_id 적용
                                     st.session_state.view_post_id    = clean_id(str(post["id"]))
                                     st.session_state.comm_write_mode = False
                                     st.rerun()
