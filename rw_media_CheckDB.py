@@ -294,7 +294,7 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
             st.session_state.selected_date_val = selected_date
             st.session_state.current_filter    = "전체"
 
-        tab_att, tab_mem = st.tabs(["📋 출석 체크", "👥 인원 관리"])
+        tab_mem, tab_att = st.tabs(["👥 인원 관리", "📋 출석 체크"])
 
         with tab_att:
             m_df = st.session_state.members_db.copy()
@@ -338,15 +338,19 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
 
                 def m_btn(col, lab, count, key, val):
                     pre = "🟢 " if f_s == val else ""
-                    if col.button(f"{pre}{lab}\n({count}명)", key=key):
+                    if col.button(f"{pre}{lab}\n({count}명)", key=key, use_container_width=True):
                         st.session_state.current_filter = "전체" if f_s == val else val
                         st.rerun()
 
-                m_btn(cols[0], "출석",   p_c, "b_p", "출석")
-                m_btn(cols[1], "지각",   l_c, "b_l", "지각")
-                m_btn(cols[2], "결석",   a_c, "b_a", "결석")
-                m_btn(cols[3], "식사",   m_c, "b_m", "식사")
-                m_btn(cols[4], "미체크", u_c, "b_u", "미체크")
+                row1 = st.columns([1, 1, 1])
+                row2 = st.columns([1, 1, 1])
+
+                m_btn(row1[0], "출석",   p_c, "b_p", "출석")
+                m_btn(row1[1], "지각",   l_c, "b_l", "지각")
+                m_btn(row1[2], "결석",   a_c, "b_a", "결석")
+                m_btn(row2[0], "식사",   m_c, "b_m", "식사")
+                m_btn(row2[1], "미체크", u_c, "b_u", "미체크")
+                row2[2].empty()
 
                 f_s = st.session_state.current_filter
                 if f_s == "식사":
@@ -365,81 +369,77 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                     st.warning(f"⚠️ '{f_s}' 상태에 해당하는 팀원이 없습니다. 상단 버튼을 다시 눌러 전체 명단을 확인하세요.")
                 else:
                     with st.form(key=f"individual_attendance_form_{date_key}", clear_on_submit=False):
-                        chosen_name = st.selectbox("👤 1. 이름 선택", member_names_list)
-                        user_row    = merged[merged["name"] == chosen_name].iloc[0]
+                        name_options = ["이름을 선택하세요"] + member_names_list
+                        chosen_name_raw = st.selectbox("👤 1. 이름 선택", name_options)
+                        chosen_name = chosen_name_raw if chosen_name_raw != "이름을 선택하세요" else None
 
-                        STATUS_OPTIONS = ["출석", "지각", "결석", "미체크"]
-                        base_status    = str(user_row["status"]).strip()
-                        status_idx     = STATUS_OPTIONS.index(base_status) if base_status in STATUS_OPTIONS else 3
-                        chosen_status  = st.selectbox("📊 2. 출석 상태 변경", STATUS_OPTIONS, index=status_idx)
+                        STATUS_OPTIONS_FORM = ["출석 상태를 선택하세요", "출석", "지각", "결석", "미체크"]
+                        chosen_status_raw = st.selectbox("📊 2. 출석 상태 변경", STATUS_OPTIONS_FORM)
+                        chosen_status = chosen_status_raw if chosen_status_raw != "출석 상태를 선택하세요" else None
+
+                        if chosen_name:
+                            user_row = merged[merged["name"] == chosen_name].iloc[0]
+                        else:
+                            user_row = None
 
                         chosen_reason = st.text_input(
                             "📝 3. 특이사항 / 사유 입력",
-                            value=str(user_row["reason"]).strip(),
+                            value=str(user_row["reason"]).strip() if user_row is not None else "",
                             placeholder="지각 및 결석 사유 등을 자유롭게 입력하세요.",
                         )
-                        chosen_meal = st.checkbox("🍴 4. 오늘 식사 신청 여부", value=bool(user_row["meal"]))
-                        chosen_position = st.selectbox(
-                            "🎬 5. 포지션 (선택)",
-                            POSITIONS,
-                            index=POSITIONS.index(str(user_row.get("position", "선택 안 함")).strip())
-                            if str(user_row.get("position", "")).strip() in POSITIONS else 0,
+                        chosen_meal = st.checkbox(
+                            "🍴 4. 오늘 식사 신청 여부",
+                            value=bool(user_row["meal"]) if user_row is not None else False,
                         )
 
                         st.write("")
                         save_btn = st.form_submit_button("💾 현재 팀원 출석 저장", type="primary", use_container_width=True)
 
                         if save_btn:
-                            if not require_conn(): st.stop()
-                            target_id = user_row["id"]
+                            if not chosen_name:
+                                st.error("❌ 이름을 선택해 주세요.")
+                            elif not chosen_status:
+                                st.error("❌ 출석 상태를 선택해 주세요.")
+                            else:
+                                if not require_conn(): st.stop()
+                                target_id = user_row["id"]
 
-                            raw_members = st.session_state.members_db.copy()
-                            raw_members["id"] = raw_members["id"].astype(str).apply(clean_id)
-                            m_idx = raw_members[raw_members["id"] == target_id].index[0]
-                            raw_members.at[m_idx, "position"] = chosen_position
-                            conn.update(
-                                spreadsheet=SHEET_URL, worksheet="members",
-                                data=pd.DataFrame(raw_members, columns=["id","name","position"]).astype(str),
-                            )
-                            st.session_state.members_db = raw_members
+                                old_db = st.session_state.attend_db.copy()
+                                old_db["id"] = old_db["id"].astype(str).apply(clean_id)
+                                remain = old_db[
+                                    ~((old_db["date"] == date_key) & (old_db["id"] == target_id))
+                                ] if not old_db.empty else pd.DataFrame()
 
-                            old_db = st.session_state.attend_db.copy()
-                            old_db["id"] = old_db["id"].astype(str).apply(clean_id)
-                            remain = old_db[
-                                ~((old_db["date"] == date_key) & (old_db["id"] == target_id))
-                            ] if not old_db.empty else pd.DataFrame()
+                                new_record = pd.DataFrame([{
+                                    "date":   date_key,
+                                    "id":     target_id,
+                                    "status": chosen_status,
+                                    "reason": chosen_reason.strip(),
+                                    "meal":   chosen_meal,
+                                }])
+                                new_db    = pd.concat([remain, new_record], ignore_index=True)
+                                upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"]).astype(str)
+                                conn.update(spreadsheet=SHEET_URL, worksheet="attendance", data=upload_df)
 
-                            new_record = pd.DataFrame([{
-                                "date":   date_key,
-                                "id":     target_id,
-                                "status": chosen_status,
-                                "reason": chosen_reason.strip(),
-                                "meal":   chosen_meal,
-                            }])
-                            new_db    = pd.concat([remain, new_record], ignore_index=True)
-                            upload_df = pd.DataFrame(new_db, columns=["date","id","status","reason","meal"]).astype(str)
-                            conn.update(spreadsheet=SHEET_URL, worksheet="attendance", data=upload_df)
-
-                            st.session_state.attend_db     = upload_df
-                            st.session_state.force_refresh = True
-                            st.success(f"🎉 {chosen_name} 님 저장 완료! (포지션: {chosen_position} / 상태: {chosen_status})")
-                            time.sleep(0.6)
-                            st.rerun()
+                                st.session_state.attend_db     = upload_df
+                                st.session_state.force_refresh = True
+                                st.success(f"🎉 {chosen_name} 님 저장 완료! (상태: {chosen_status})")
+                                time.sleep(0.6)
+                                st.rerun()
 
         with tab_mem:
-            st.dataframe(st.session_state.members_db[["name","position"]], use_container_width=True, hide_index=True)
+            st.dataframe(st.session_state.members_db[["name"]], use_container_width=True, hide_index=True)
             m_tab1, m_tab2, m_tab3 = st.tabs(["➕ 추가", "✏️ 수정", "🗑️ 삭제"])
 
             with m_tab1:
                 with st.form("add_m"):
                     n_n = st.text_input("신규 인원 이름 *")
-                    n_p = st.selectbox("포지션 선택", POSITIONS)
                     if st.form_submit_button("예배자 신규 등록"):
                         if not require_conn(): st.stop()
                         if n_n.strip():
                             new_m = pd.concat([
                                 st.session_state.members_db,
-                                pd.DataFrame([{"id": str(int(time.time()*1000)), "name": n_n.strip(), "position": n_p}])
+                                pd.DataFrame([{"id": str(int(time.time()*1000)), "name": n_n.strip(), "position": "선택 안 함"}])
                             ], ignore_index=True).sort_values("name").reset_index(drop=True)
                             conn.update(spreadsheet=SHEET_URL, worksheet="members", data=pd.DataFrame(new_m, columns=["id","name","position"]))
                             st.session_state.members_db    = new_m
@@ -454,14 +454,11 @@ elif st.session_state.page == "⛪ 예배 출석 관리":
                     tgt_row  = st.session_state.members_db[st.session_state.members_db["name"] == edit_tgt].iloc[0]
                     with st.form("edit_m"):
                         e_n = st.text_input("이름 수정", value=tgt_row["name"])
-                        e_p = st.selectbox("포지션 수정", POSITIONS,
-                                           index=POSITIONS.index(tgt_row["position"]) if tgt_row["position"] in POSITIONS else 0)
                         if st.form_submit_button("정보 수정 완료!"):
                             if not require_conn(): st.stop()
                             updated = st.session_state.members_db.copy()
                             idx = updated[updated["id"] == tgt_row["id"]].index[0]
                             updated.at[idx, "name"]     = e_n.strip()
-                            updated.at[idx, "position"] = e_p
                             updated = updated.sort_values("name").reset_index(drop=True)
                             conn.update(spreadsheet=SHEET_URL, worksheet="members", data=pd.DataFrame(updated, columns=["id","name","position"]))
                             st.session_state.members_db    = updated
